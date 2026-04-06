@@ -1,92 +1,66 @@
 ---
 title: REPLICATION-NOTES.md
-version: "0.1.0"
-last_updated: "2026-04-05"
+version: "2.0"
+last_updated: "2026-04-06"
 ---
 
-# REPLICATION-NOTES.md — Environment & Run Log
+# REPLICATION-NOTES.md
 
-## Environment Setup
+## Hardware
 
-| Component | Value | Notes |
-|-----------|-------|-------|
-| Hardware | ZBook (single node) | Primary test machine |
-| OS | Windows 11 | — |
-| Python | TBD | Required for tools/ scripts |
-| Lemonade | localhost:11434 | Ollama-compatible endpoint |
-| Git | fc1783ef1213f0e65915253c7a2cdd21b14880cb | Latest commit |
+| Component | Value |
+|-----------|-------|
+| Machine | HP ZBook (single node) |
+| OS | Windows 11 |
+| Python | 3.10 (64-bit) |
+| Lemonade endpoint | http://localhost:8000/api/v1 |
+| API key | x |
+| Git branch | poc/child-agent |
 
----
+**NOT a Z8. Do not use Z8 ports, specs, or model sizes.**
 
-## Model Inventory
+## Model
 
-| Model | Provider | Size | Status |
-|-------|----------|------|--------|
-| Qwen3-Coder-Next-GGUF | Lemonade | 43.7GB | Depth 0 (root) |
-| Qwen3.5-35B-A3B-GGUF | Lemonade | 19.7GB | Depth 1 (worker) — TBD |
-| lfm2.5-it-1.2b-FLM | Lemonade | NPU path | Depth 2 (leaf) |
+| Field | Value |
+|-------|-------|
+| Model ID | Qwen3.5-4B-GGUF |
+| RAM used | ~27 GB |
+| Gen tok/s | ~40.9 |
+| TTFT | ~0.96s |
+| Context window | 8,192 tokens |
 
----
+All other model slots (35B, Hermes, LFM2.5, Qwen3-Coder-Next) are NOT active.
 
-## Performance Baselines
+## Session Startup
 
-| Model | Prompt tok/s | Gen tok/s | TTFT (21k ctx) | TTFT (fresh) |
-|-------|--------------|-----------|----------------|--------------|
-| Qwen3-Coder-Next-GGUF | ~410 | ~35 | 12–22s | <1s |
-| lfm2.5-it-1.2b-FLM | NPU | ~40 | <0.3s | <0.3s |
-| Qwen3.5-35B-A3B-GGUF | TBD | TBD | TBD | TBD |
+```powershell
+curl http://localhost:8000/api/v1/models
+python pre_flight.py
+```
 
-**Note:** KV cache anchor locks at ~16,372 tokens. Keep system prompt + ticket context under 16k for minimum TTFT.
+## Known Issues
 
----
-
-## Recurring Errors
-
-| Date | Issue | Resolution |
-|------|-------|------------|
-| — | — | — |
-
----
+| ID | Date | Description | Status |
+|----|------|-------------|--------|
+| H-API-001 | 2026-04-05 | Browser tool calls fail on 4B | Forbidden in policy |
+| H-API-005 | 2026-04-06 | Model unloads on idle timeout | Keep Lemonade active |
+| H-SCOPE-001 | 2026-04-06 | Agent self-installed fastmcp | Forbidden in .clinerules |
+| H-CONFLICT-001 | 2026-04-06 | Merge conflict in pre_flight.py | Fixed |
 
 ## Environment Deltas
 
-| Date | Change | Impact |
-|------|--------|--------|
-| 2026-04-05 | Initial setup | Baseline established |
+| Date | Change |
+|------|--------|
+| 2026-04-05 | Initial setup |
+| 2026-04-06 | Rescoped to 4B single-model POC |
+| 2026-04-06 | Removed fastmcp 3.1.0 |
+| 2026-04-06 | Fixed pre_flight.py merge conflict |
+| 2026-04-06 | All configs locked to ZBook / Lemonade :8000 |
 
----
+## POC Success Criteria
 
-## MT-01 Run Log
-
-### Run [2026-04-05] — Initial Baseline
-
-| Model | Score | Pass? | Notes |
-|-------|-------|-------|-------|
-| lfm2.5-it-1.2b-FLM | — | — | Not yet tested |
-| Qwen3.5-35B-A3B-GGUF | — | — | Not yet tested |
-| Qwen3-Coder-Next-GGUF | — | — | Not yet tested |
-
----
-
-## Run Instructions
-
-1. Ensure Lemonade is running: `curl http://localhost:11434`
-2. Run MT-01 protocol: `python src/run_test.py --protocol MT-01`
-3. Check `logs/mt01_failures_YYYYMMDD.jsonl` for detailed logs
-4. Update scoring matrix in MODEL-SELECTION-TEST.md
-
----
-
-## Next Steps
-
-- [ ] Run MT-01 on all models
-- [ ] Update scoring matrix in MODEL-SELECTION-TEST.md
-- [ ] If 28/30 achieved: unlock DT-01 (Depth Scaling Test)
-| TS-20260405-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-05 22:13:44 |
-| TS-20260405-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-05 22:14:28 |
-| TS-20260405-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-05 22:25:21 |
-| TS-20260405-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-05 22:27:55 |
-| TS-20260405-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-05 22:34:59 |
-| TS-20260406-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-06 07:31:46 |
-| TS-20260406-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-06 07:35:08 |
-| TS-20260406-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-06 07:36:00 |
+- [ ] python pre_flight.py exits 0
+- [ ] child_agent.py completes ticket end-to-end
+- [ ] Child reads context, writes result, closes ticket
+- [ ] pytest -q tests/ passes
+- [ ] ruff check src/ clean

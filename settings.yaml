@@ -1,24 +1,28 @@
 ---
-# Fractal Claws — 4B POC Config
-# Single model. Single endpoint. Frozen.
+# Fractal Claws - 4B POC
+# Hardware: HP ZBook (single node)
+# Endpoint: Lemonade at localhost:8000
 
 model:
   id: Qwen3.5-4B-GGUF
-  endpoint: http://localhost:11434/v1
+  endpoint: http://localhost:8000/api/v1
   format: openai-compat
+  api_key: x
   temperature: 0.2
   max_tokens: 512
   context_window: 8192
   timeout_seconds: 90
   max_retries: 2
   stream: false
-
+  perf:
+    gen_tok_per_sec: 40.9
+    ttft_s: 0.96
+    ram_used_gb: 27.0
   allowed_tools:
-    - shell        # parent only
+    - shell
     - read_file
     - write_file
     - list_dir
-
   forbidden_tools:
     - browser
     - web_fetch
@@ -34,12 +38,12 @@ tickets:
   decrement_default: 3
 
 validation:
-  unit:  "pytest -q tests/"
-  lint:  "ruff check src/"
-  type:  "mypy src/"
-  docs:  "python tools/spec_check.py"
+  unit: "pytest -q tests/"
+  lint: "ruff check src/"
+  type: "mypy src/"
+  docs: "python tools/spec_check.py"
 
 logging:
   dir: logs/
   pattern: "logs/session_{date}.jsonl"
-  gitignore: true  # logs never committed
+  gitignore: true
