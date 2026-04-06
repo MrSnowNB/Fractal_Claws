@@ -25,10 +25,12 @@ import subprocess
 import yaml
 from openai import OpenAI
 
-MODEL    = "Qwen3.5-4B-GGUF"
-ENDPOINT = "http://localhost:8000/api/v1"
-API_KEY  = "x"
-EXEC_DIR = "output"
+MODEL          = "Qwen3.5-4B-GGUF"
+ENDPOINT       = "http://localhost:8000/api/v1"
+API_KEY        = "x"
+EXEC_DIR       = "output"
+MAX_LLM_TRIES  = 3        # retries on empty/null response
+RETRY_DELAY_S  = 4        # seconds between retries
 
 client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
@@ -220,6 +222,51 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
     return results
 
 
+# ────────────────────────────── LLM call with retry
+def call_model(messages: list, max_tokens: int, temperature: float, timeout: int) -> tuple:
+    """
+    Call the model with retry on empty/null choices.
+    Returns (raw_text, total_tokens, finish_reason, elapsed_seconds).
+    Raises RuntimeError if all retries exhausted.
+    """
+    for attempt in range(1, MAX_LLM_TRIES + 1):
+        try:
+            t0 = time.perf_counter()
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
+            )
+            elapsed = round(time.perf_counter() - t0, 2)
+
+            # Guard against None choices
+            if not response.choices:
+                print(f"[child] attempt {attempt}/{MAX_LLM_TRIES}: empty choices — retrying in {RETRY_DELAY_S}s")
+                time.sleep(RETRY_DELAY_S)
+                continue
+
+            choice = response.choices[0]
+            raw    = (choice.message.content or "") if choice.message else ""
+            used   = response.usage.total_tokens if response.usage else 0
+            why    = choice.finish_reason or "unknown"
+
+            if not raw.strip():
+                print(f"[child] attempt {attempt}/{MAX_LLM_TRIES}: empty content — retrying in {RETRY_DELAY_S}s")
+                time.sleep(RETRY_DELAY_S)
+                continue
+
+            return raw, used, why, elapsed
+
+        except Exception as e:
+            print(f"[child] attempt {attempt}/{MAX_LLM_TRIES}: exception — {e}")
+            if attempt < MAX_LLM_TRIES:
+                time.sleep(RETRY_DELAY_S)
+
+    raise RuntimeError(f"model call failed after {MAX_LLM_TRIES} attempts")
+
+
 # ────────────────────────────── prompt
 TOOL_SYNTAX = """\
 You are a tool-calling agent. Output ONLY raw tool blocks — no prose, no markdown, no indentation.
@@ -291,25 +338,22 @@ def main():
     print(format_snapshot("pre", hw_pre))
 
     print(f"[child] calling model: {MODEL}")
-    t0 = time.perf_counter()
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": system_msg},
-            {"role": "user",   "content": user_prompt},
-        ],
-        max_tokens=ticket.get("max_tokens", 1024),
-        temperature=0.1,
-        timeout=ticket.get("timeout_seconds", 120),
-    )
-    elapsed = round(time.perf_counter() - t0, 2)
+    try:
+        raw, used, why, elapsed = call_model(
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user",   "content": user_prompt},
+            ],
+            max_tokens=ticket.get("max_tokens", 1024),
+            temperature=0.1,
+            timeout=ticket.get("timeout_seconds", 120),
+        )
+    except RuntimeError as e:
+        print(f"[child] FATAL: {e}")
+        sys.exit(1)
 
     hw_post = hw_snapshot()
     print(format_snapshot("post", hw_post))
-
-    raw  = response.choices[0].message.content or ""
-    used = response.usage.total_tokens if response.usage else 0
-    why  = response.choices[0].finish_reason
     print(f"[child] responded ({used} tokens, finish={why}, elapsed={elapsed}s)")
     print(format_delta(hw_pre, hw_post, elapsed, used))
     print(f"[child] raw:\n{raw[:800]}")
