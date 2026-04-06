@@ -254,14 +254,18 @@ class Component:
     
     Attributes:
         name: Name of the component
-        type: Type/category of the component
+        description: Description of the component
+        component_type: Type/category of the component
+        effort: Estimated effort level
         dependencies: List of component dependencies
         status: Current status of the component
         metadata: Additional metadata about the component
     """
     
     name: str
+    description: str = ""
     component_type: str = "generic"
+    effort: int = 1
     dependencies: List[str] = field(default_factory=list)
     status: str = "pending"
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -286,6 +290,27 @@ class Component:
             "status": self.status,
             "dependency_count": len(self.dependencies)
         }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "Component":
+        """
+        Create a Component instance from a dictionary.
+        
+        Args:
+            data: Dictionary containing component data
+            
+        Returns:
+            Component instance
+        """
+        return cls(
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            component_type=data.get("component_type", "generic"),
+            effort=data.get("effort", 1),
+            dependencies=data.get("dependencies", []),
+            status=data.get("status", "pending"),
+            metadata=data.get("metadata", {})
+        )
 
 
 class FirstPrinciplesSolver:
@@ -346,7 +371,8 @@ class FirstPrinciplesSolver:
         
         return result
     
-    def create_component(self, name: str, component_type: str = "generic") -> Component:
+    def create_component(self, name: str, description: str = "", 
+                          component_type: str = "generic", effort: int = 1) -> Component:
         """
         Create a new component for the solution.
         
@@ -360,7 +386,12 @@ class FirstPrinciplesSolver:
         if len(self.components) >= self.max_components:
             raise ValueError(f"Maximum component count ({self.max_components}) reached")
         
-        component = Component(name=name, component_type=component_type)
+        component = Component(
+            name=name,
+            description=description,
+            component_type=component_type,
+            effort=effort
+        )
         self.components.append(component)
         
         self.history.append({
@@ -370,6 +401,111 @@ class FirstPrinciplesSolver:
         })
         
         return component
+    
+    def _first_principles_breakdown(self, task: str) -> List[Component]:
+        """
+        Break down a task into components using first principles.
+        
+        Args:
+            task: The task description to break down
+            
+        Returns:
+            List of Component instances representing the breakdown
+        """
+        components = []
+        
+        if "database" in task.lower():
+            components.append(Component(name="database_layer", 
+                                       description="Database layer for data persistence",
+                                       component_type="data", effort=3))
+            components.append(Component(name="query_handler",
+                                       description="Query handler for database operations",
+                                       component_type="logic", effort=2))
+        elif "api" in task.lower() or "endpoint" in task.lower():
+            components.append(Component(name="api_layer",
+                                       description="API layer for external requests",
+                                       component_type="data", effort=2))
+            components.append(Component(name="request_validator",
+                                       description="Request validator for input validation",
+                                       component_type="logic", effort=1))
+        elif "auth" in task.lower() or "authentication" in task.lower():
+            components.append(Component(name="auth_service",
+                                       description="Authentication service for user login",
+                                       component_type="security", effort=3))
+            components.append(Component(name="session_manager",
+                                       description="Session management for user sessions",
+                                       component_type="security", effort=2))
+        elif "ui" in task.lower() or "frontend" in task.lower():
+            components.append(Component(name="ui_component",
+                                       description="User interface component",
+                                       component_type="presentation", effort=2))
+            components.append(Component(name="template_engine",
+                                       description="Template engine for rendering views",
+                                       component_type="presentation", effort=1))
+        elif "task" in task.lower() or "decompose" in task.lower():
+            components.append(Component(name="task_1",
+                                       description="First subtask",
+                                       component_type="logic", effort=1))
+            components.append(Component(name="task_2",
+                                       description="Second subtask",
+                                       component_type="logic", effort=1))
+            components.append(Component(name="task_3",
+                                       description="Third subtask",
+                                       component_type="logic", effort=1))
+        else:
+            components.append(Component(name="main_task",
+                                       description="Main task execution",
+                                       component_type="logic", effort=2))
+            components.append(Component(name="helper_task",
+                                       description="Helper task for support",
+                                       component_type="support", effort=1))
+        
+        return components
+    
+    def _recursive_decomposition(self, task: str) -> List[str]:
+        """
+        Recursively decompose a task into subtasks.
+        
+        Args:
+            task: The task to decompose
+            
+        Returns:
+            List of subtask strings
+        """
+        subtasks = []
+        
+        if "database" in task.lower():
+            subtasks.append("Design database schema")
+            subtasks.append("Create database migrations")
+            subtasks.append("Implement connection pooling")
+            subtasks.append("Create query optimization strategies")
+        elif "api" in task.lower() or "endpoint" in task.lower():
+            subtasks.append("Define API endpoints")
+            subtasks.append("Implement request parsing")
+            subtasks.append("Implement response formatting")
+            subtasks.append("Add error handling")
+        elif "auth" in task.lower() or "authentication" in task.lower():
+            subtasks.append("Design authentication flow")
+            subtasks.append("Implement token generation")
+            subtasks.append("Implement token validation")
+            subtasks.append("Add refresh token support")
+        elif "ui" in task.lower() or "frontend" in task.lower():
+            subtasks.append("Design component structure")
+            subtasks.append("Implement styling")
+            subtasks.append("Add interactivity")
+            subtasks.append("Test responsive design")
+        elif "task" in task.lower() or "decompose" in task.lower():
+            subtasks.append("Analyze task requirements")
+            subtasks.append("Identify dependencies")
+            subtasks.append("Break into atomic tasks")
+            subtasks.append("Estimate effort for each")
+        else:
+            subtasks.append("Analyze task requirements")
+            subtasks.append("Identify key components")
+            subtasks.append("Break into subtasks")
+            subtasks.append("Estimate overall effort")
+        
+        return subtasks
     
     def solve(self, problem: str, component_types: Optional[List[str]] = None) -> Dict[str, Any]:
         """
@@ -411,6 +547,26 @@ class FirstPrinciplesSolver:
         })
         
         return solution
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about the current solver state.
+        
+        Returns:
+            Dictionary containing:
+                - total_components: Total number of components
+                - pending_components: Number of pending components
+                - total_effort: Sum of all effort values
+        """
+        total_components = len(self.components)
+        pending_components = sum(1 for c in self.components if c.status == "pending")
+        total_effort = sum(c.effort for c in self.components)
+        
+        return {
+            "total_components": total_components,
+            "pending_components": pending_components,
+            "total_effort": total_effort
+        }
     
     def heal(self, failure: Optional[Exception] = None) -> bool:
         """
