@@ -92,10 +92,17 @@ def main():
     ticket_id = ticket.get("ticket_id", os.path.basename(ticket_path))
     print(f"[child] loaded ticket: {ticket_id}")
 
-    # ─ 2. Read context files
+    # ─ 2. Setup destination (will move ticket after processing)
+    dest_dir = "tickets/closed"
+    os.makedirs(dest_dir, exist_ok=True)
+    filename = os.path.basename(ticket_path)
+    dest = os.path.join(dest_dir, filename)
+    print(f"[child] ticket will be saved to: {dest}")
+
+    # ─ 3. Read context files
     context = build_context(ticket)
 
-    # ─ 3. Build simple prompt and call model
+    # ─ 4. Build simple prompt and call model
     system_prompt = "You are a helpful assistant."
     user_prompt = build_user_prompt(ticket, context)
 
@@ -123,6 +130,10 @@ def main():
     with open(result_path, "w", encoding="utf-8") as f:
         f.write(write_content)
     print(f"[child] write OK")
+
+    # ─ 6. Move ticket to closed and save
+    os.replace(ticket_path, dest)
+    print(f"[child] ticket moved to: {dest}")
 
     # ─ 7. Update ticket
     ticket["status"] = "closed"
