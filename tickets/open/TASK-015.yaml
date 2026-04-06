@@ -1,0 +1,20 @@
+ticket_id: TASK-015
+title: Write fibonacci script
+task: Write output/generate_fib.py to generate 20 fibonacci numbers and save to output/fib.txt
+depends_on: []
+allowed_tools:
+- name: write_file
+status: open
+depth: 1
+max_depth: 1
+created_at: '2026-04-06'
+updated_at: '2026-04-06T18:52:03'
+result_path: logs/TASK-015-result.txt
+max_tokens: 512
+timeout_seconds: 60
+context_files: []
+audit:
+  attempts:
+  - depth: 0
+    fail_reason: result file missing
+    ts: '2026-04-06T18:52:03'

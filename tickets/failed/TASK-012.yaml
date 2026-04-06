@@ -1,0 +1,21 @@
+ticket_id: TASK-012
+title: Write fibonacci generation script
+task: Write a Python script to output/generate_fib.py that generates the first 20
+  fibonacci numbers and saves them to output/fib.txt
+depends_on: []
+allowed_tools:
+- name: write_file
+status: failed
+depth: 1
+max_depth: 1
+created_at: '2026-04-06'
+updated_at: '2026-04-06T18:51:19'
+result_path: logs/TASK-012-result.txt
+max_tokens: 512
+timeout_seconds: 60
+context_files: []
+audit:
+  attempts:
+  - depth: 0
+    fail_reason: 'non-zero returncode: 1'
+    ts: '2026-04-06T18:42:42'
