@@ -1,35 +1,84 @@
 """
-pre_flight.py — Lemonade inference readiness gate.
+pre_flight.py — Lemonade inference readiness gate + Cline settings sync.
 
 Usage:
     python pre_flight.py                          # uses DEFAULT_MODEL
-    python pre_flight.py Qwen3-Coder-Next-GGUF    # override model via arg
+    python pre_flight.py qwen                     # alias
+    python pre_flight.py Qwen3-Coder-Next-GGUF    # full model ID
 
 Run this after ANY model swap in Lemonade UI before using Cline or the harness.
-The /api/v1/models list updates before inference is ready — only a real
-chat/completions call confirms the model is warm.
+On success, automatically updates VSCode settings.json so Cline uses the
+correct model — no manual UI change needed.
 """
 
 import sys
 import time
+import json
+import re
 import openai
+from pathlib import Path
 
-BASE_URL = "http://localhost:8000/api/v1"
-API_KEY  = "x"
+BASE_URL    = "http://localhost:8000/api/v1"
+API_KEY     = "x"
 MAX_RETRIES = 15
 RETRY_DELAY = 8  # seconds
 
-DEFAULT_MODEL = "user.Hermes-3-Llama-3.1-8B-GGUF"
+DEFAULT_MODEL = "Qwen3-Coder-Next-GGUF"
 
 KNOWN_MODELS = {
-    "hermes":  "user.Hermes-3-Llama-3.1-8B-GGUF",
-    "qwen":    "Qwen3-Coder-Next-GGUF",
-    "35b":     "Qwen3.5-35B-A3B-GGUF",
-    "a3b":     "Qwen3.5-35B-A3B-GGUF",
+    "hermes": "user.Hermes-3-Llama-3.1-8B-GGUF",
+    "qwen":   "Qwen3-Coder-Next-GGUF",
+    "35b":    "Qwen3.5-35B-A3B-GGUF",
+    "a3b":    "Qwen3.5-35B-A3B-GGUF",
 }
+
+# VSCode settings.json locations — checked in order, first found wins
+SETTINGS_PATHS = [
+    Path.home() / "AppData" / "Roaming" / "Code" / "User" / "settings.json",
+    Path.home() / ".config" / "Code" / "User" / "settings.json",  # Linux
+    Path.home() / "Library" / "Application Support" / "Code" / "User" / "settings.json",  # macOS
+]
+
+# Cline settings.json key for the model ID
+CLINE_MODEL_KEY = "cline.apiModelId"
+
+
+def find_settings() -> Path | None:
+    for p in SETTINGS_PATHS:
+        if p.exists():
+            return p
+    return None
+
+
+def update_cline_settings(model: str) -> None:
+    path = find_settings()
+    if not path:
+        print("[pre_flight] ⚠ Could not find VSCode settings.json — update Cline model manually.")
+        return
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+
+        # settings.json may have comments (JSONC) — strip // comments for parsing
+        stripped = re.sub(r'(?m)^\s*//.*$', '', raw)
+        stripped = re.sub(r',\s*([}\]])', r'\1', stripped)  # trailing commas
+
+        data = json.loads(stripped)
+        old = data.get(CLINE_MODEL_KEY, "<not set>")
+        data[CLINE_MODEL_KEY] = model
+
+        # Write back — pretty-printed, preserving indent style
+        path.write_text(json.dumps(data, indent=4), encoding="utf-8")
+        print(f"[pre_flight] ✓ Cline settings updated: '{old}' → '{model}'")
+        print(f"[pre_flight]   ({path})")
+    except Exception as e:
+        print(f"[pre_flight] ⚠ Failed to update settings.json: {e}")
+        print(f"[pre_flight]   Set '{CLINE_MODEL_KEY}': '{model}' manually.")
+
 
 def resolve_model(arg: str) -> str:
     return KNOWN_MODELS.get(arg.lower(), arg)
+
 
 def check(model: str) -> None:
     client = openai.OpenAI(base_url=BASE_URL, api_key=API_KEY)
@@ -46,6 +95,7 @@ def check(model: str) -> None:
             )
             reply = r.choices[0].message.content.strip()
             print(f"[pre_flight] ✓ READY — model responded: '{reply}'")
+            update_cline_settings(model)
             print(f"[pre_flight] Safe to use Cline / harness now.")
             sys.exit(0)
         except openai.NotFoundError:
