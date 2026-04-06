@@ -1,129 +1,98 @@
 ---
-title: AGENT-POLICY.md — Operator Policy
-version: "0.1.0"
-last_updated: "2026-04-05"
+title: AGENT-POLICY.md
+version: "2.0"
+scope: 4B single-model child-agent POC
 ---
 
-# AGENT-POLICY.md — Self-Healing Recursive First Principles Operator
+# AGENT-POLICY.md
 
-## Core Mandates
+## Model
 
-1. **Atomicity** — One clear, bounded objective per task.
-2. **Testability** — Binary pass/fail outcome must be definable before work begins.
-3. **Gating** — No phase transition without green gate.
-4. **Failure Handling** — On any failure or uncertainty, trigger the 5-step failure procedure.
+```yaml
+model:    Qwen3.5-4B-GGUF
+endpoint: http://localhost:11434/v1
+format:   openai-compat
+temp:     0.2
+max_tokens: 512
+timeout:  90s
+retries:  2  # stop BEFORE yolo-mode kills at 3
+```
+
+**One model. One endpoint. Frozen for this POC.**
 
 ---
 
-## Lifecycle (Sequential Only)
+## Roles
+
+| Role | Who | Tools |
+|------|-----|-------|
+| Parent | Cline in VS Code | shell, read_file, write_file, list_dir |
+| Child | child_agent.py (subprocess) | read_file, write_file ONLY |
+
+---
+
+## Forbidden Tools (Both Roles)
+
+- `browser`
+- `web_fetch`
+- `computer_use`
+- `code_interpreter`
+- `shell` (child only — parent may use shell to spawn child)
+
+If a task requires a browser or web fetch: reject it. Write ISSUE.md. Halt.
+
+---
+
+## Lifecycle
 
 ```
-Plan → Build → Validate → Review → Release
+Plan → Ticket → Spawn → Result → Validate → Done
 ```
 
-| Phase | Entry Condition | Exit Gate |
-|-------|-----------------|-----------|
-| Plan | Human approves task scope | Spec written, reviewed by human |
-| Build | Spec approved | All validation gates green |
-| Validate | Build complete | All four validation suites pass |
-| Review | Validation green | Human approves diff |
-| Release | Human approval | Artifact tagged and documented |
+| Phase | Who | Action |
+|-------|-----|--------|
+| Plan | Parent | Understand task, write ticket YAML |
+| Ticket | Parent | Write to `tickets/open/` |
+| Spawn | Parent | `python agent/child_agent.py <ticket>` |
+| Result | Child | Read context, write result, close ticket |
+| Validate | Parent | Run 4 gates |
+| Done | Parent | Confirm all gates green |
 
 ---
 
 ## Validation Gates
 
-All four gates must be green before Build→Validate→Review transition:
-
-```yaml
-gates:
-  unit:
-    command: "pytest -q"
-    pass_condition: "0 failed, 0 errors"
-  lint:
-    command: "ruff check . || flake8 ."
-    pass_condition: "clean output"
-  type:
-    command: "mypy . || pyright ."
-    pass_condition: "0 errors"
-  docs:
-    command: "spec drift check"
-    pass_condition: "no unresolved drift"
+```bash
+pytest -q tests/
+ruff check src/
+mypy src/
+python tools/spec_check.py
 ```
 
----
-
-## Failure Handling Procedure
-
-When any step fails or the agent is uncertain:
-
-1. **capture_logs()** — Save full stdout/stderr to `logs/ISS-<date>-<short-description>.log`
-2. **update_troubleshooting()** — Append entry to `TROUBLESHOOTING.md`
-3. **update_replication()** — Append entry to `REPLICATION-NOTES.md`
-4. **open_issue()** — Create or update `ISSUE.md`
-5. **halt_and_wait_human()** — Stop all work, await instruction
-
-**No recovery attempts without human approval.**
+All four must pass. Any failure → failure procedure → halt.
 
 ---
 
-## Ticket System
+## Failure Procedure
 
-| Field | Description |
-|-------|-------------|
-| `depth` | 0=root, 1=worker, 2=leaf (NPU) |
-| `parent` | Ticket ID of parent (null if root) |
-| `children` | List of child ticket IDs |
-| `status` | pending | escalated | closed |
-| `attempts` | Number of execution attempts |
-| `decrement` | Remaining escalation decrements |
-| `priority` | low | medium | high | critical |
-| `result` | Test pass/fail, score, and notes |
-
-**Ticket Hierarchy:**
-- Root ticket (depth 0) coordinates all work
-- Worker tickets (depth 1) perform subtasks
-- Leaf tickets (depth 2) run on NPU (lfm2.5-1.2B)
+1. `TROUBLESHOOTING.md` — append entry with error, context, fix
+2. `REPLICATION-NOTES.md` — append session delta
+3. `ISSUE.md` — create/update with task text + rejection reason
+4. Halt. Do not retry. Do not speculate. Await human.
 
 ---
 
-## Context Budget Rules
+## Ticket Rules
 
-- At **60% utilization**: write `CHECKPOINT.md`
-- At **80% utilization**: halt, alert human
-- Never continue a task that cannot be completed
-
----
-
-## Model Selection Policy
-
-| Model | Depth | Slot | Purpose |
-|-------|-------|------|---------|
-| Qwen3-Coder-Next-GGUF | 0 | root | Orchestrator, high-level reasoning |
-| Qwen3.5-35B-A3B-GGUF | 1 | worker | Subtask execution |
-| lfm2.5-it-1.2b-FLM | 2 | leaf | NPU execution, fast leaf tasks |
-
-**Model Pass Threshold:** 28/30 consecutive MT-01 test passes.
+- Max 5 sentences per `task` field — 4B context budget
+- `context_files` must exist before ticket is written
+- `result_path` must be set before child is spawned
+- `decrement` starts at 3; hit 0 → status: escalated → halt
 
 ---
 
-## Living Documents (Root)
+## Context Budget
 
-| File | Purpose |
-|------|---------|
-| `TROUBLESHOOTING.md` | Append-only failure log |
-| `REPLICATION-NOTES.md` | Environment setup, hardware notes |
-| `ISSUE.md` | Open issue tracker |
-| `SPEC.md` | Task specification (created per task) |
-| `PLAN.md` | Agent plan (created per task) |
-| `CHECKPOINT.md` | Mid-task state snapshot |
-
----
-
-## Operator Rules
-
-1. **Thinking Budget** — Use `<think>` blocks only in Plan phase; suppress in Build.
-2. **Tool Calls** — One tool call at a time; wait for result.
-3. **File Format** — All output must be Markdown+frontmatter or pure YAML.
-4. **Phase Transitions** — No skipping or revisiting without human approval.
-5. **Halt State** — No speculative fixes after halt; await human instruction.
+- 60%: write `CHECKPOINT.md`
+- 80%: halt, alert human
+- Never continue a task that cannot complete in remaining budget

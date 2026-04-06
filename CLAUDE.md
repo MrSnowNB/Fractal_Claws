@@ -1,165 +1,114 @@
 ---
-title: CLAUDE.md — Self-Healing Recursive First Principles Problem Solver
-version: "0.1.0"
-last_updated: "2026-04-05"
+title: CLAUDE.md — Fractal Claws POC
+version: "2.0"
+scope: 4B single-model child-agent POC
 ---
 
-# CLAUDE.md — First Principles AI Operator
+# CLAUDE.md
 
-## Mission Statement
-
-You are a **self-healing recursive first principles problem solver** operating at the Fractal_Claws workspace.
-
-You coordinate a hierarchy of models:
-- **Depth 0 (root)**: Qwen3-Coder-Next-GGUF — orchestrator, high-level reasoning
-- **Depth 1 (worker)**: Qwen3.5-35B-A3B-GGUF — subtask execution
-- **Depth 2 (leaf)**: lfm2.5-it-1.2b-FLM — NPU execution, fast leaf tasks
-
-## Core Principles
-
-### 1. First Principles Thinking
-
-Break down problems to fundamental truths and build up solutions from there.
-
-1. Identify the first principles (physics, math, logic, existing knowledge)
-2. Deconstruct the problem to its irreducible components
-3. Reconstruct a solution from first principles
-
-### 2. Recursive Decomposition
-
-Every complex task is decomposed into atomic, testable subtasks.
-
-```
-Task → Ticket → Subtasks → Leaf Tasks
-```
-
-- **Ticket**: Atomic unit of work with pass/fail criteria
-- **Depth 0**: Root ticket coordinates all work
-- **Depth 1**: Worker tickets perform subtasks
-- **Depth 2**: Leaf tickets run on NPU (lfm2.5-1.2B)
-
-### 3. Self-Healing
-
-On failure or uncertainty, trigger the 5-step failure procedure:
-
-1. **capture_logs()** — Save full stdout/stderr
-2. **update_troubleshooting()** — Append to TROUBLESHOOTING.md
-3. **update_replication()** — Append to REPLICATION-NOTES.md
-4. **open_issue()** — Create or update ISSUE.md
-5. **halt_and_wait_human()** — Stop all work, await instruction
-
-### 4. Validation Gates
-
-All four gates must be green before progression:
-
-| Gate | Command | Pass Condition |
-|------|---------|----------------|
-| Unit | `pytest -q` | 0 failed, 0 errors |
-| Lint | `ruff check .` | clean output |
-| Type | `mypy .` | 0 errors |
-| Docs | `spec drift check` | no unresolved drift |
-
-## Ticket System
-
-Each ticket has:
-- `id`: Unique identifier (e.g., `TKT-2026-04-05-001`)
-- `depth`: 0 (root), 1 (worker), 2 (leaf)
-- `parent`: Parent ticket ID (null if root)
-- `children`: List of child ticket IDs
-- `status`: pending | escalated | closed
-- `attempts`: Number of execution attempts
-- `decrement`: Remaining escalation decrements
-- `priority`: low | medium | high | critical
-- `result`: Test pass/fail, score, and notes
-
-## Lifecycle
-
-```
-Plan → Build → Validate → Review → Release
-```
-
-### Phase: Plan
-
-- Human defines task scope
-- Agent reads spec, asks clarifying questions if ambiguous
-- Agent writes SPEC.md and PLAN.md
-- **Exit gate**: Human explicitly approves the plan
-
-### Phase: Build
-
-- Agent implements exactly what is described in the spec
-- All new files must comply with the file format policy
-- **Exit gate**: All four validation gates green
-
-### Phase: Validate
-
-- Agent runs all four gate commands in order
-- Any non-green gate triggers immediate failure handling
-- **Exit gate**: Human reviews gate output and approves progression
-
-### Phase: Review
-
-- Human reviews the diff
-- Agent answers questions, makes only requested changes
-- **Exit gate**: Human approves merge/release
-
-### Phase: Release
-
-- Agent tags the release
-- Artifacts documented with version, date, and checksum
-- Update REPLICATION-NOTES.md with the release summary
-
-## Living Documents
-
-| File | Purpose |
-|------|---------|
-| `TROUBLESHOOTING.md` | Append-only failure log |
-| `REPLICATION-NOTES.md` | Environment setup, hardware notes |
-| `ISSUE.md` | Open issue tracker |
-| `SPEC.md` | Task specification (created per task) |
-| `PLAN.md` | Agent plan (created per task) |
-| `CHECKPOINT.md` | Mid-task state snapshot |
-
-## Context Budget Rules
-
-- **60% utilization**: Write `CHECKPOINT.md`
-- **80% utilization**: Halt, alert human
-- Never continue a task that cannot be completed
-
-## File Format Policy
-
-All output files must be one of:
-- **Markdown with YAML frontmatter** — `.md` files beginning with `---`
-- **Pure YAML** — `.yaml` or `.yml` files with no free-form prose
-
-No `.txt`, `.json`, `.toml`, `.ini`, `.csv`, or binary files unless explicitly approved.
-
-## Operator Rules
-
-1. **One tool call at a time** — Wait for result before issuing next
-2. **Atomic tasks** — One clear objective per ticket
-3. **Testable outcomes** — Binary pass/fail definable before work
-4. **No phase skipping** — Sequential lifecycle only
-5. **Halt on uncertainty** — Trigger failure procedure, await human
-
-## Model Selection
-
-| Model | Depth | Slot | Purpose |
-|-------|-------|------|---------|
-| Qwen3-Coder-Next-GGUF | 0 | root | Orchestrator, high-level reasoning |
-| Qwen3.5-35B-A3B-GGUF | 1 | worker | Subtask execution |
-| lfm2.5-it-1.2b-FLM | 2 | leaf | NPU execution, fast leaf tasks |
-
-**Model Pass Threshold:** 28/30 consecutive MT-01 test passes.
-
-## Emergency Protocol
-
-If you encounter:
-- **Port conflict**: Check `netstat -ano | findstr :11434`
-- **Model load failure**: Verify `curl http://localhost:11434`
-- **Context exhaustion**: Write `CHECKPOINT.md`, halt, alert human
-- **Validation gate failure**: Trigger failure procedure, halt
+> Cline reads this file before every task. One model. One job. No swarms.
 
 ---
 
-**Remember**: You are a self-healing recursive first principles problem solver. Break down problems to fundamentals, coordinate a hierarchy of models, and heal yourself on failure.
+## What This Harness Is
+
+A **4B model coding harness** where:
+- Cline (in VS Code) is the **parent** — it reads tickets, writes code, calls tools
+- A spawned `child_agent.py` is the **child** — it gets a ticket, uses read/write tools only, writes a result, exits
+- The ticket YAML is the **only** contract between parent and child
+- Success = child completes a ticket loop end-to-end with read_file + write_file
+
+**One model. Two roles. No model switching. No swarms.**
+
+---
+
+## Model
+
+```
+Model:    Qwen3.5-4B-GGUF
+Endpoint: http://localhost:11434/v1
+Format:   openai-compat
+```
+
+Do not load any other model. Do not switch models mid-session.
+
+---
+
+## Parent Role (Cline)
+
+1. Read task from human
+2. Write a ticket YAML to `tickets/open/` using `tickets/template.yaml` as schema
+3. Run: `python agent/child_agent.py tickets/open/<ticket>.yaml`
+4. Poll `tickets/closed/` for result file
+5. Read result, continue work or write next ticket
+6. Run validation gates before declaring done
+
+**Forbidden tools for parent:**
+- `browser`, `web_fetch`, `computer_use`, `code_interpreter`
+- Any tool not in: `shell`, `read_file`, `write_file`, `list_dir`
+
+---
+
+## Child Role (child_agent.py)
+
+- Receives exactly one ticket YAML via `argv[1]`
+- Reads `context_files` listed in the ticket using `tools/read_file.py`
+- Writes result to `result_path` using `tools/write_file.py`
+- Moves ticket to `tickets/closed/`
+- Exits 0 on success, 1 on failure
+
+**Child has exactly two tools: `read_file` and `write_file`. Nothing else.**
+
+---
+
+## Ticket Lifecycle
+
+```
+tickets/open/       <- parent writes here
+tickets/in_progress/ <- child moves ticket here on pickup
+tickets/closed/     <- child writes result, moves ticket here
+```
+
+---
+
+## Validation Gates
+
+All four must be green before any task is "done":
+
+| Gate | Command | Pass |
+|------|---------|------|
+| Unit | `pytest -q tests/` | 0 failures |
+| Lint | `ruff check src/` | clean |
+| Type | `mypy src/` | 0 errors |
+| Docs | `python tools/spec_check.py` | no drift |
+
+---
+
+## Failure Procedure
+
+1. Append to `TROUBLESHOOTING.md`
+2. Append to `REPLICATION-NOTES.md`
+3. Write `ISSUE.md`
+4. Halt. Do not retry. Wait for human.
+
+**Max retries before halt: 2.** YOLO mode kills at 3 — stop at 2.
+
+---
+
+## Session Startup Checklist
+
+```bash
+python pre_flight.py
+```
+
+If any check fails — fix it before accepting any task.
+
+---
+
+## Rules
+
+1. One tool call per turn. Wait for result.
+2. Never narrate. Never explain. Call the tool, then stop.
+3. Never spawn more than one child per ticket.
+4. Never write to `tickets/closed/` directly — child does that.
+5. Context at 80%: write `CHECKPOINT.md`, halt, alert human.
