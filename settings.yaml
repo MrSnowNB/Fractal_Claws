@@ -1,0 +1,66 @@
+---
+title: "Model Slot Configuration"
+version: "1.0.0"
+owner: "MrSnowNB"
+status: "canonical"
+updated: "2026-04-05"
+---
+profiles:
+  fast:
+    model: "qwen2.5-coder:7b"
+    backend: "lemonade"
+    endpoint: "http://localhost:11434/v1"
+    max_tokens: 2048
+    temperature: 0.2
+    use_case: "shell-mini worker, fast deterministic ops"
+  deep:
+    model: "nemotron-mini"
+    backend: "ollama"
+    endpoint: "http://localhost:11434/v1"
+    max_tokens: 4096
+    temperature: 0.3
+    use_case: "reasoning-mini worker, doc/spec reasoning"
+  intent:
+    model: "granite-guardian-8b"
+    backend: "lemonade"
+    endpoint: "http://localhost:11434/v1"
+    max_tokens: 1024
+    temperature: 0.1
+    use_case: "adversarial review, escalated ticket guardian check"
+  root:
+    model: "qwen2.5-coder:7b"
+    backend: "lemonade"
+    endpoint: "http://localhost:11434/v1"
+    max_tokens: 8192
+    temperature: 0.2
+    use_case: "Cline root coding agent, primary harness brain"
+worker_classes:
+  shell-mini:
+    profile: "fast"
+    allowed_tools: [shell]
+    max_depth: 1
+    timeout_seconds: 60
+    decrement: 2
+  reasoning-mini:
+    profile: "deep"
+    allowed_tools: [read_file, write_file]
+    max_depth: 2
+    timeout_seconds: 120
+    decrement: 2
+harness:
+  frozen_model: "qwen2.5-coder:7b"
+  frozen_backend: "lemonade"
+  acceptance_runs: 5
+  tests:
+    - id: "H-1"
+      name: "write_file"
+    - id: "H-2"
+      name: "read_file"
+    - id: "H-3"
+      name: "edit_file"
+    - id: "H-4"
+      name: "shell_verbatim"
+    - id: "H-5"
+      name: "two_step_sequential"
+    - id: "H-6"
+      name: "repo_local_change"
