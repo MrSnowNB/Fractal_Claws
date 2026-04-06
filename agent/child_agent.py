@@ -28,7 +28,13 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 # ───────────────────────────────────────────────────────────────────────────
 def load_ticket(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        docs = list(yaml.safe_load_all(f))
+    # merge frontmatter + body if two docs, otherwise return single doc
+    if len(docs) == 2:
+        merged = docs[0] or {}
+        merged.update(docs[1] or {})
+        return merged
+    return docs[0]
 
 
 def save_ticket(path: str, ticket: dict):
