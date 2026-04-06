@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs — runtime artifacts, never commit
+logs/
+*.jsonl
+*.log
+
+# Tickets in-flight — runtime state
+tickets/in_progress/
+tickets/closed/
+
+# Keep the open dir and closed dir structure but not contents
+!tickets/open/.gitkeep
+!tickets/in_progress/.gitkeep
+!tickets/closed/.gitkeep
+
+# Env
+.env
+*.env
+.venv/
+venv/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# mypy / ruff cache
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
