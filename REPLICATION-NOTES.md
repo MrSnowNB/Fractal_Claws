@@ -82,3 +82,5 @@ last_updated: "2026-04-05"
 - [ ] Run MT-01 on all models
 - [ ] Update scoring matrix in MODEL-SELECTION-TEST.md
 - [ ] If 28/30 achieved: unlock DT-01 (Depth Scaling Test)
+| TS-20260405-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-05 22:13:44 |
+| TS-20260405-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-05 22:14:28 |

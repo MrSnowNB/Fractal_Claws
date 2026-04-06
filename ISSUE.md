@@ -50,3 +50,21 @@ ISS-XXX:
 3. **Assignee** runs MT-01 protocol to verify fix
 4. **Assignee** updates status: closed
 5. Human reviews and confirms closure
+## ISS-20260405-TASK-005
+
+- **Status**: open
+- **Blocked On**: human
+- **Title**: Failure in ticket TASK-005
+- **Description**: Test failure
+- **Ticket ID**: TASK-005
+- **Timestamp**: 2026-04-05 22:13:44
+- **Required Action**: Human review and approval to proceed
+## ISS-20260405-TASK-005
+
+- **Status**: open
+- **Blocked On**: human
+- **Title**: Failure in ticket TASK-005
+- **Description**: Test failure
+- **Ticket ID**: TASK-005
+- **Timestamp**: 2026-04-05 22:14:28
+- **Required Action**: Human review and approval to proceed
