@@ -1,14 +1,15 @@
 def generate_fibonacci(n):
-fib = [0, 1]
-for i in range(2, n):
-fib.append(fib[i-1] + fib[i-2])
+fib = []
+a, b = 0, 1
+for i in range(n):
+fib.append(a)
+a, b = b, a + b
 return fib
 
 fib_numbers = generate_fibonacci(20)
 
 with open('output/fib.txt', 'w') as f:
-f.write('First 20 Fibonacci numbers:\n')
-for i, num in enumerate(fib_numbers, 1):
-f.write(f'{i}. {num}\n')
+for num in fib_numbers:
+f.write(str(num) + '\n')
 
-print(fib_numbers)
+print("Fibonacci numbers generated and saved to output/fib.txt")
