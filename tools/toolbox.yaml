@@ -1,0 +1,67 @@
+# BuddingBot Native Toolbox Registry
+# Agents may only call tools at or below their current stage.
+# Stage is declared in settings.yaml under agent.stage
+# Valid stages (in order): bud, branch, planted, rooted
+
+tools:
+
+  # ── BUD STAGE (core) ─────────────────────────────────────────────────────
+
+  - name: read_file
+    path: tools/core/read_file.py
+    stage: bud
+    risk: low
+    description: Read any file by path. Returns full text content.
+
+  - name: write_file
+    path: tools/core/write_file.py
+    stage: bud
+    risk: low
+    description: Write content to a file at path. Creates parent dirs.
+
+  - name: exec_python
+    path: tools/core/exec_python.py
+    stage: bud
+    risk: medium
+    sandbox: output/
+    description: Execute a Python file. Restricted to output/ directory.
+
+  # ── BRANCH STAGE (extended) ───────────────────────────────────────────────
+
+  - name: shell
+    path: tools/extended/shell.py
+    stage: branch
+    risk: medium
+    description: Run a shell command. Returns stdout/stderr/returncode.
+
+  - name: web_fetch
+    path: tools/extended/web_fetch.py
+    stage: branch
+    risk: medium
+    description: Fetch a URL and return text content. No script execution.
+
+  # ── PLANTED STAGE (knowledge graph) ──────────────────────────────────────
+
+  - name: graphify
+    path: tools/extended/graphify_tool.py
+    stage: planted
+    risk: high
+    description: >
+      Build a knowledge graph from text files using safishamsi/graphify.
+      Typical input: tickets/closed/  Typical output: logs/graph.json
+    install: pip install graphify
+    source: https://github.com/safishamsi/graphify
+
+  # ── ROOTED STAGE (persistent memory) ─────────────────────────────────────
+
+  - name: memory_write
+    path: tools/extended/memory_write.py
+    stage: rooted
+    risk: medium
+    description: Write a key/value pair to logs/memory.yaml (cross-session state).
+
+  - name: memory_read
+    path: tools/extended/memory_read.py
+    stage: rooted
+    risk: low
+    description: Read a key from logs/memory.yaml.

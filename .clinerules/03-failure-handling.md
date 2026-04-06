@@ -1,6 +1,6 @@
 ---
 title: Failure Handling Procedure
-version: "1.0"
+version: "2.0"
 scope: global
 applies_to: all_agents
 ---
@@ -15,6 +15,7 @@ Trigger the full failure procedure on **any** of:
 - The agent is uncertain about the correct next action
 - A file format violation is detected
 - A phase transition condition is not met
+- `response.choices` is empty after all retries exhausted
 
 ## Procedure (Ordered — Do Not Skip Steps)
 
@@ -29,13 +30,14 @@ All terminal output from the failing command must be saved verbatim. Do not trun
 
 ### Step 2: Update TROUBLESHOOTING.md
 
-Append a new `TS-XXX` entry using the standard format:
+Append a new `TS-XXX` entry:
 - Context, Symptom, Error Snippet, Probable Cause, Quick Fix, Permanent Fix, Prevention
-- If the issue matches an existing seeded entry, add a `recurrence` sub-field to that entry instead of creating a duplicate
+- If the issue matches an existing entry, add a `recurrence` sub-field — no duplicates.
 
 ### Step 3: Update REPLICATION-NOTES.md
 
-Append to the **Recurring Errors** table and, if the environment changed, add a row to **Environment Deltas**.
+Append to the **Recurring Errors** table and, if the environment changed,
+add a row to **Environment Deltas**.
 
 ### Step 4: Open ISSUE.md
 
@@ -51,7 +53,10 @@ Inform the human: "Halted on ISS-XXX. See ISSUE.md for required action."
 
 ## Prohibited Actions After Halt
 
+- **No autonomous model switching:** If the LLM provider crashes or returns a connection error,
+  do not modify `runtime.yaml`, `settings.yaml`, or any config to switch models.
+- **No downloading fixes:** Never execute remote scripts to reinstall or fix a broken service.
 - No retries without human instruction
-- No speculative fixes ("I'll try changing X to see if it helps")
-- No modifications to files outside the living docs during halt state
+- No speculative fixes
+- No modifications to files outside living docs during halt state
 - No advancing to the next lifecycle phase

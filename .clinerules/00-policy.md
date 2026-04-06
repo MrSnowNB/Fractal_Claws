@@ -1,12 +1,24 @@
 ---
-title: ClawBot Agent Policy
-version: "1.0"
+title: BuddingBot Agent Policy
+version: "2.0"
 scope: global
 applies_to: all_agents
-last_updated: "2026-04-01"
-***
+last_updated: "2026-04-06"
+---
 
-# ClawBot Agent Policy
+# BuddingBot Agent Policy
+
+## First Principles
+
+This system is built on computational irreducibility — you cannot shortcut the growth process.
+Each stage must be lived through, not skipped. A bud cannot act like a planted tree.
+
+**AI-First Communication Rules:**
+- No narration. No hedge language. No "I think" or "perhaps".
+- State observations and actions as facts.
+- Write output to be read by another model, not a human.
+- One action per turn. Emit the action. Stop.
+- Silence is data. An empty result is not an error unless the contract says otherwise.
 
 ## Core Mandates
 
@@ -21,11 +33,27 @@ Every task assigned to an agent must be:
 On any failure **or** uncertainty, the agent must:
 1. Update all living documents (`TROUBLESHOOTING.md`, `REPLICATION-NOTES.md`)
 2. Open or update `ISSUE.md`
-3. Call `halt_and_wait_human` — no speculative continuation
+3. `halt_and_wait_human` — no speculative continuation
 
-***
+## Budding Bot Lifecycle
 
-## Lifecycle (Sequential Only)
+```
+Bud → Branch → Planted → Rooted
+```
+
+Stage determines tool access. A bot may only call tools declared for its current stage or below.
+See `tools/toolbox.yaml` for the tool registry.
+
+| Stage   | Capability                              | Tool Access          |
+|---------|-----------------------------------------|----------------------|
+| Bud     | Execute a single ticket with tools      | core only            |
+| Branch  | Decompose goals, self-dispatch tickets  | core + extended      |
+| Planted | Self-evaluate, write sub-tickets        | core + extended + kg |
+| Rooted  | Persists state, prunes failed branches  | full toolbox         |
+
+Current stage is declared in `settings.yaml` under `agent.stage`.
+
+## Lifecycle Phases (Sequential Only)
 
 ```
 Plan → Build → Validate → Review → Release
@@ -41,8 +69,6 @@ Each phase transition requires the previous phase's gate to be green.
 | Validate | Build complete                          | All four validation suites pass    |
 | Review   | Validation green                        | Human approves diff                |
 | Release  | Human approval received                 | Artifact tagged and documented     |
-
-***
 
 ## Validation Gates
 
@@ -64,9 +90,16 @@ gates:
     pass_condition: "no unresolved drift"
 ```
 
-A single gate failure blocks the entire transition. The agent captures the failure, updates living docs, and halts.
+A single gate failure blocks the entire transition. Capture failure, update living docs, halt.
 
-***
+## Security & Execution Limits
+
+**ABSOLUTE PROHIBITION ON REMOTE CODE EXECUTION:**
+- Never generate, suggest, or execute commands that download and run scripts from the internet
+  (e.g., `irm <url> | iex`, `curl <url> | bash`, `wget -O- <url> | sh`).
+- All software installations use established package managers (`pip`, `npm`, `apt`) or
+  explicit human-approved local scripts only.
+- Never attempt to fix a crashed service by downloading external installers autonomously.
 
 ## Failure Handling Procedure
 
