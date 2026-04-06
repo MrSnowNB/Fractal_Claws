@@ -1,23 +1,30 @@
-ticket_id: TASK-001
-title: Smoke test — confirm model is responsive
-status: open
-created_at: "2026-04-06"
-updated_at: "2026-04-06"
+---
+title: "Implement child_agent.py"
+version: "1.0"
+last_updated: "2026-04-06T16:23:57"
+---
+# Fractal Claws — Ticket TASK-001
 
-task: >-
-  Reply with exactly this string and nothing else: TASK-001 PASSED
+## Task
+Implement agent/child_agent.py — a minimal Python script that reads a ticket YAML from tickets/open/, executes the task described, writes the result to result_path, and moves the ticket to tickets/closed/ with status: closed. Use only read_file and write_file tools. No MCP, no pip installs, no browser.
 
-context_files: []
+## Context Files
+- agent/child_agent.py
 
-result_path: logs/TASK-001-result.txt
+## Result Path
+- agent/child_agent.py
 
-max_tokens: 16
-timeout_seconds: 30
+## Constraints
+- max_tokens: 256
+- timeout_seconds: 60
+- decrement: 2
+- depth: 0
 
-allowed_tools:
-  - name: read_file
-    usage: read_file <path>
-    description: Read a file and return its contents.
-  - name: write_file
-    usage: write_file <path> "<content>"
-    description: Write content to a file at the given path.
+## Tool Manifest
+Allowed tools: read_file, write_file
+
+## Audit
+parent_model: Qwen3.5-4B-GGUF
+child_model: Qwen3.5-4B-GGUF
+endpoint: http://localhost:8000/api/v1
+attempts: []

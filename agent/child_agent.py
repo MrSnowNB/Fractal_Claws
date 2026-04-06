@@ -121,6 +121,9 @@ def main():
     raw_response = response.choices[0].message.content.strip()
     tokens_used = response.usage.total_tokens if response.usage else 0
     print(f"[child] model responded ({tokens_used} tokens)")
+    
+    print(f"[child] raw_response repr: {repr(raw_response)}")
+    print(f"[child] finish_reason: {response.choices[0].finish_reason}")
 
     # ─ 5. Write raw response directly (no parsing)
     result_path = ticket.get("result_path", "")
