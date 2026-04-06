@@ -22,11 +22,14 @@ RETRY_DELAY = 8  # seconds
 DEFAULT_MODEL = "user.Hermes-3-Llama-3.1-8B-GGUF"
 
 KNOWN_MODELS = {
-    "hermes":  "user.Hermes-3-Llama-3.1-8B-GGUF",
-    "qwen":    "Qwen3-Coder-Next-GGUF",
-    "35b":     "Qwen3.5-35B-A3B-GGUF",
-    "a3b":     "Qwen3.5-35B-A3B-GGUF",
+    "hermes": "user.Hermes-3-Llama-3.1-8B-GGUF",
+    "qwen":   "Qwen3-Coder-Next-GGUF",
+    "4b":     "Qwen3.5-4B-GGUF",       # ← child node
+    "35b":    "Qwen3.5-35B-A3B-GGUF",
+    "a3b":    "Qwen3.5-35B-A3B-GGUF",
 }
+
+  # ← corrected
 
 def resolve_model(arg: str) -> str:
     return KNOWN_MODELS.get(arg.lower(), arg)
