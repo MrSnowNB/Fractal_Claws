@@ -1,76 +1,45 @@
 ---
-# HaloClaw — Model Slot Configuration
-# Written by: human seed
-# Updated by: MT-01 test results (fill in scoring_matrix after run)
-# Hardware: ZBook (single node, first test)
+# Fractal Claws — 4B POC Config
+# Single model. Single endpoint. Frozen.
 
-swarm:
-  max_depth: 2           # default; variable per protocol
-  swarm_limit: 1         # single node for first test
-  lemonade_endpoint: "http://localhost:11434"
-  ticket_dir: "tickets/"
-  log_dir: "logs/"
-  audit_format: jsonl
+model:
+  id: Qwen3.5-4B-GGUF
+  endpoint: http://localhost:11434/v1
+  format: openai-compat
+  temperature: 0.2
+  max_tokens: 512
+  context_window: 8192
+  timeout_seconds: 90
+  max_retries: 2
+  stream: false
 
-models:
-  # ── Root / Operator (depth 0) ──────────────────────────────────────
-  root:
-    id: "Qwen3-Coder-Next-GGUF"
-    provider: lemonade
-    endpoint: "http://localhost:11434"
-    context_window: 64000
-    kv_cache_anchor_tokens: 16372   # observed checkpoint rollback point
-    prompt_tok_per_sec: 410
-    gen_tok_per_sec: 35
-    ttft_budget_s: 15               # warn if TTFT exceeds this
-    max_output_tokens: 2048
-    allowed_tools: [read_file, write_file, shell, search, ticket_write]
-    mt01_score: null                # fill after MT-01
+  allowed_tools:
+    - shell        # parent only
+    - read_file
+    - write_file
+    - list_dir
 
-  # ── Worker (depth 1) ──────────────────────────────────────────────
-  worker:
-    id: "Qwen3.5-35B-A3B-GGUF"
-    provider: lemonade
-    endpoint: "http://localhost:11434"
-    context_window: 32000
-    prompt_tok_per_sec: null        # TBD from MT-01
-    gen_tok_per_sec: null
-    ttft_budget_s: 20
-    max_output_tokens: 1024
-    allowed_tools: [read_file, write_file, shell, ticket_write]
-    mt01_score: null
+  forbidden_tools:
+    - browser
+    - web_fetch
+    - computer_use
+    - code_interpreter
 
-  # ── Leaf / Mini (depth 2) ─────────────────────────────────────────
-  leaf:
-    id: "lfm2.5-it-1.2b-FLM"
-    provider: lemonade
-    endpoint: "http://localhost:11434"
-    context_window: 4096
-    prompt_tok_per_sec: null        # NPU path, not measured in tok/s
-    gen_tok_per_sec: 40
-    ttft_budget_s: 1
-    max_output_tokens: 512
-    allowed_tools: [shell]          # single tool only at leaf
-    mt01_score: null
+tickets:
+  open_dir: tickets/open
+  in_progress_dir: tickets/in_progress
+  closed_dir: tickets/closed
+  template: tickets/template.yaml
+  max_open: 5
+  decrement_default: 3
 
-# ── Ticket defaults ───────────────────────────────────────────────────
-ticket_defaults:
-  decrement: 2                      # attempts before escalation (max_depth=2 default)
-  depth: 0
-  status: open                      # open | escalated | closed
-  allowed_statuses: [open, escalated, closed]
-
-# ── Validation gates ─────────────────────────────────────────────────
 validation:
-  unit: "pytest -q"
-  lint: "ruff check src/"
-  type: "mypy src/"
-  spec_drift: "python tools/spec_check.py"
-  consecutive_pass_required: 5
+  unit:  "pytest -q tests/"
+  lint:  "ruff check src/"
+  type:  "mypy src/"
+  docs:  "python tools/spec_check.py"
 
-# ── Logging ──────────────────────────────────────────────────────────
 logging:
-  level: INFO
-  session_log_pattern: "logs/session_{date}.jsonl"
-  mt01_failure_log: "logs/mt01_failures_{date}.jsonl"
-  fields_required: [timestamp, event_type, ticket_id, depth, model_slot, tokens_in, tokens_out, ttft_s, tps]
+  dir: logs/
+  pattern: "logs/session_{date}.jsonl"
+  gitignore: true  # logs never committed
