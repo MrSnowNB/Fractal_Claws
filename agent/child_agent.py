@@ -65,30 +65,6 @@ def build_context(ticket: dict) -> str:
     return "\n\n".join(context_parts)
 
 
-def build_system_prompt(ticket: dict) -> str:
-    """Build system prompt with tool descriptions."""
-    tool_block = ""
-    for t in ticket.get("allowed_tools", []):
-        tool_block += (
-            f"\nTool: {t['name']}\n"
-            f"  Usage: {t['usage']}\n"
-            f"  Description: {t['description']}\n"
-        )
-
-    return (
-        "You are a coding assistant. You have exactly two tools:\n"
-        f"{tool_block}\n"
-        "RULES:\n"
-        "- You may NOT use any tool not listed above.\n"
-        "- You must call write_file exactly ONCE as your final action.\n"
-        "- Do NOT narrate. Do NOT explain. Do NOT use markdown.\n"
-        "- Your entire response must be a single write_file command on one line:\n"
-        f'  write_file {ticket["result_path"]} "<your answer here>"\n'
-        "- If your answer contains newlines, use \\n in the string.\n"
-        "- Do not include any text before or after the write_file command.\n"
-    )
-
-
 def build_user_prompt(ticket: dict, context: str) -> str:
     """Build user prompt with task description."""
     prompt = f"Task: {ticket['task']}\n"
@@ -96,30 +72,6 @@ def build_user_prompt(ticket: dict, context: str) -> str:
         prompt += f"\nContext:\n{context}\n"
     prompt += f"\nWrite your result to: {ticket['result_path']}"
     return prompt
-
-
-def parse_write_command(response: str, result_path: str) -> tuple[str, str] | None:
-    """
-    Parse: write_file <path> "<content>"
-    Returns (path, content) or None if not found.
-    """
-    # Match: write_file <path> "content" or write_file <path> 'content'
-    pattern = r'write_file\s+(\S+)\s+["\'](.+)["\']'
-    match = re.search(pattern, response, re.DOTALL)
-    if match:
-        path = match.group(1)
-        content = match.group(2).replace("\\n", "\n")
-        return path, content
-
-    # Fallback: write_file <path> <rest of line unquoted>
-    pattern2 = r'write_file\s+(\S+)\s+(.+)'
-    match2 = re.search(pattern2, response)
-    if match2:
-        path = match2.group(1)
-        content = match2.group(2).replace("\\n", "\n")
-        return path, content
-
-    return None
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -140,19 +92,11 @@ def main():
     ticket_id = ticket.get("ticket_id", os.path.basename(ticket_path))
     print(f"[child] loaded ticket: {ticket_id}")
 
-    # ─ 2. Move to closed (skip in_progress for simplicity)
-    dest_dir = "tickets/closed"
-    os.makedirs(dest_dir, exist_ok=True)
-    filename = os.path.basename(ticket_path)
-    dest = os.path.join(dest_dir, filename)
-    os.replace(ticket_path, dest)
-    print(f"[child] ticket copied to: {dest}")
-
-    # ─ 3. Read context files
+    # ─ 2. Read context files
     context = build_context(ticket)
 
-    # ─ 4. Build prompt and call model
-    system_prompt = build_system_prompt(ticket)
+    # ─ 3. Build simple prompt and call model
+    system_prompt = "You are a helpful assistant."
     user_prompt = build_user_prompt(ticket, context)
 
     print(f"[child] calling model: {MODEL}")
@@ -171,20 +115,12 @@ def main():
     tokens_used = response.usage.total_tokens if response.usage else 0
     print(f"[child] model responded ({tokens_used} tokens)")
 
-    # ─ 5. Parse write_file command from response
+    # ─ 5. Write raw response directly (no parsing)
     result_path = ticket.get("result_path", "")
-    parsed = parse_write_command(raw_response, result_path)
+    write_content = raw_response if raw_response else "NO RESPONSE"
 
-    if not parsed:
-        print(f"[child] ERROR: model did not produce a write_file command")
-        print(f"[child] raw response: {raw_response[:200]}")
-        sys.exit(1)
-
-    write_path, write_content = parsed
-
-    # ─ 6. Execute write
-    print(f"[child] writing result to: {write_path}")
-    with open(write_path, "w", encoding="utf-8") as f:
+    print(f"[child] writing result to: {result_path}")
+    with open(result_path, "w", encoding="utf-8") as f:
         f.write(write_content)
     print(f"[child] write OK")
 
