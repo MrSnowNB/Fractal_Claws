@@ -184,8 +184,13 @@ def tool_exec_python(path: str, timeout: int = 30) -> str:
 
 
 # ────────────────────────────── parser
+# normalise: strip leading whitespace only from tool header lines (TOOL/PATH/END),
+# NOT from CONTENT blocks — preserving Python indentation.
+_HEADER_RE = re.compile(r'^[ \t]+(TOOL:|PATH:|END$|DONE$)', re.MULTILINE)
+
 def normalise(text: str) -> str:
-    return "\n".join(line.lstrip() for line in text.splitlines())
+    """Strip leading whitespace only from tool-block header lines, not content."""
+    return _HEADER_RE.sub(lambda m: m.group(1), text)
 
 
 BLOCK_RE = re.compile(
@@ -237,7 +242,7 @@ END
 
 Rules:
 1. Start your response with the first TOOL: line. No words before it.
-2. No indentation. Every line starts at column 0.
+2. No indentation on TOOL/PATH/END lines. File content inside CONTENT blocks may use normal Python indentation.
 3. exec_python paths must be inside output/
 4. ALWAYS write_file before exec_python when writing and running the same file.
 5. After the last tool block write: DONE
@@ -280,7 +285,7 @@ def main():
 
     context     = build_context(ticket)
     user_prompt = build_user_prompt(ticket, context)
-    system_msg  = "Output ONLY raw tool blocks starting at column 0. No markdown. No prose. No indentation. Always write_file before exec_python on the same path."
+    system_msg  = "Output ONLY raw tool blocks. TOOL/PATH/END lines have no leading whitespace. File content inside CONTENT blocks uses normal Python indentation. Always write_file before exec_python on the same path."
 
     hw_pre = hw_snapshot()
     print(format_snapshot("pre", hw_pre))
