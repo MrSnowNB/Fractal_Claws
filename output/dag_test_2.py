@@ -1,0 +1,1 @@
+print("TASK-005 DEPENDS ON TASK-004 — OK")
