@@ -3,26 +3,23 @@
 parent_agent.py — Fractal Claws parent agent.
 
 Usage:
-    python agent/parent_agent.py [--once]
-    python agent/parent_agent.py --goal "<plain English goal>"  (A3B decompose — Phase 2)
+    python agent/parent_agent.py                        # dispatch all open tickets
+    python agent/parent_agent.py --once                 # dispatch one ticket then exit
+    python agent/parent_agent.py --goal "<plain English goal>"
+        # A3B decomposes goal into tickets, writes to tickets/open/, then dispatches
 
-Scans tickets/open/ for YAML tickets, respects depends_on DAG ordering,
-dispatches each to child_agent.py, reads the result log, marks PASS/FAIL.
+A3B decompose model: Qwen3.5-35B-A3B-GGUF (must be active in Lemonade)
+Child execution model: Qwen3.5-4B-GGUF
 
 Depends-on logic:
-  Before dispatching a ticket, all ticket_ids listed in depends_on must
-  already exist as closed tickets in tickets/closed/.
-  Tickets whose deps are unmet are skipped and re-queued each pass.
-
-Options:
-  --once    Process one ready ticket then exit
+  Before dispatching, all depends_on ticket_ids must exist in tickets/closed/.
+  Unmet deps are deferred and reported at end of pass.
 
 Result evaluation:
-  PASS  — result log exists, non-empty, no ERROR lines, returncode 0 if present
-  FAIL  — result log missing, empty, contains ERROR, or non-zero returncode
+  PASS — result log exists, non-empty, no ERROR lines, returncode 0 if present
+  FAIL — result log missing, empty, contains ERROR, or non-zero returncode
 
-On FAIL the parent writes a retry ticket with depth+1.
-max_depth per ticket is read from the ticket itself (default 1, locked).
+On FAIL: retry with depth+1 up to per-ticket max_depth (default 1, locked).
 """
 import sys
 import os
@@ -31,14 +28,22 @@ import time
 import subprocess
 import glob
 import yaml
+from openai import OpenAI
 
-CHILD      = os.path.join(os.path.dirname(__file__), "child_agent.py")
-OPEN_DIR   = "tickets/open"
-CLOSED_DIR = "tickets/closed"
-FAIL_DIR   = "tickets/failed"
-DEFAULT_MAX_DEPTH = 1   # locked — increase only after stability gate
+CHILD        = os.path.join(os.path.dirname(__file__), "child_agent.py")
+OPEN_DIR     = "tickets/open"
+CLOSED_DIR   = "tickets/closed"
+FAIL_DIR     = "tickets/failed"
+DEFAULT_MAX_DEPTH = 1
+
+ENDPOINT     = "http://localhost:8000/api/v1"
+API_KEY      = "x"
+DECOMPOSE_MODEL = "Qwen3.5-35B-A3B-GGUF"
+
+client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
 
+# ────────────────────────────── ticket helpers
 def load_ticket(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         docs = list(yaml.safe_load_all(f))
@@ -56,20 +61,14 @@ def save_ticket(path: str, ticket: dict):
 
 
 def deps_met(ticket: dict) -> bool:
-    """Return True if all depends_on tickets are present in tickets/closed/."""
     deps = ticket.get("depends_on", []) or []
     for dep in deps:
-        closed_path = os.path.join(CLOSED_DIR, f"{dep}.yaml")
-        if not os.path.exists(closed_path):
+        if not os.path.exists(os.path.join(CLOSED_DIR, f"{dep}.yaml")):
             return False
     return True
 
 
 def evaluate_result(result_path: str) -> tuple:
-    """
-    Returns (passed: bool, reason: str)
-    PASS if: file exists, non-empty, no ERROR lines, returncode 0 if present.
-    """
     if not os.path.exists(result_path):
         return False, "result file missing"
     with open(result_path, "r", encoding="utf-8") as f:
@@ -85,22 +84,17 @@ def evaluate_result(result_path: str) -> tuple:
 
 
 def dispatch(ticket_path: str) -> int:
-    """Run child_agent.py on ticket. Returns subprocess returncode."""
-    result = subprocess.run(
-        [sys.executable, CHILD, ticket_path],
-        capture_output=False
-    )
+    result = subprocess.run([sys.executable, CHILD, ticket_path], capture_output=False)
     return result.returncode
 
 
 def make_retry_ticket(ticket: dict, reason: str) -> dict:
-    """Clone ticket with incremented depth for retry."""
     retry = dict(ticket)
     depth = int(retry.get("depth", 0)) + 1
     retry["depth"]      = depth
     retry["status"]     = "open"
     retry["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    audit = retry.get("audit", {}) or {}
+    audit    = retry.get("audit", {}) or {}
     attempts = audit.get("attempts", []) or []
     attempts.append({"depth": depth - 1, "fail_reason": reason, "ts": retry["updated_at"]})
     audit["attempts"] = attempts
@@ -112,24 +106,147 @@ def scan_open() -> list:
     return sorted(glob.glob(os.path.join(OPEN_DIR, "*.yaml")))
 
 
+def next_ticket_id() -> str:
+    """Generate next TASK-NNN id by scanning open + closed directories."""
+    existing = []
+    for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR]:
+        for p in glob.glob(os.path.join(d, "TASK-*.yaml")):
+            base = os.path.basename(p).replace(".yaml", "")
+            try:
+                existing.append(int(base.split("-")[1]))
+            except (IndexError, ValueError):
+                pass
+    n = max(existing, default=0) + 1
+    return f"TASK-{n:03d}"
+
+
+# ────────────────────────────── A3B goal decomposition
+DECOMPOSE_SYSTEM = """\
+You are a task decomposer for an autonomous agent system.
+Given a plain-English goal, decompose it into a minimal ordered list of atomic tickets.
+
+Rules:
+- Each ticket must be completable in 1-2 tool calls by a small model.
+- Available tools per ticket: write_file, exec_python, read_file.
+- exec_python paths must be inside output/
+- Use depends_on to express sequential dependencies.
+- Output ONLY a YAML list. No prose, no markdown fences, no explanation.
+
+Output format (repeat for each ticket):
+- ticket_id: TASK-NNN
+  title: <short title>
+  task: <single sentence instruction>
+  depends_on: []  # or list of ticket_ids
+  allowed_tools:
+    - name: write_file
+    - name: exec_python
+"""
+
+
+def decompose_goal(goal: str, first_id_n: int) -> list:
+    """
+    Call A3B to decompose goal into ticket dicts.
+    Returns list of ticket dicts with ticket_id, title, task, depends_on, allowed_tools.
+    """
+    print(f"[parent] calling A3B to decompose goal...")
+    user_prompt = f"Goal: {goal}\n\nStart ticket numbering from TASK-{first_id_n:03d}."
+
+    response = client.chat.completions.create(
+        model=DECOMPOSE_MODEL,
+        messages=[
+            {"role": "system", "content": DECOMPOSE_SYSTEM},
+            {"role": "user",   "content": user_prompt},
+        ],
+        max_tokens=2048,
+        temperature=0.1,
+        timeout=120,
+    )
+
+    raw = response.choices[0].message.content or ""
+    used = response.usage.total_tokens if response.usage else 0
+    print(f"[parent] A3B responded ({used} tokens)")
+    print(f"[parent] A3B raw:\n{raw[:1200]}")
+
+    # Strip markdown fences if present
+    cleaned = re.sub(r'^```[\w]*\n?', '', raw.strip(), flags=re.MULTILINE)
+    cleaned = re.sub(r'```$', '', cleaned.strip())
+
+    try:
+        tickets = yaml.safe_load(cleaned)
+        if not isinstance(tickets, list):
+            print(f"[parent] ERROR: A3B output not a list, got {type(tickets)}")
+            return []
+        return tickets
+    except yaml.YAMLError as e:
+        print(f"[parent] ERROR: failed to parse A3B YAML: {e}")
+        print(f"[parent] raw output was:\n{raw}")
+        return []
+
+
+def write_decomposed_tickets(tickets: list) -> list:
+    """Write ticket dicts to tickets/open/. Returns list of written paths."""
+    os.makedirs(OPEN_DIR, exist_ok=True)
+    written = []
+    for t in tickets:
+        tid = t.get("ticket_id", next_ticket_id())
+        t.setdefault("status",     "open")
+        t.setdefault("depth",      0)
+        t.setdefault("max_depth",  1)
+        t.setdefault("created_at", time.strftime("%Y-%m-%d"))
+        t.setdefault("updated_at", time.strftime("%Y-%m-%d"))
+        t.setdefault("result_path", f"logs/{tid}-result.txt")
+        t.setdefault("max_tokens",  512)
+        t.setdefault("timeout_seconds", 60)
+        t.setdefault("context_files", [])
+        path = os.path.join(OPEN_DIR, f"{tid}.yaml")
+        save_ticket(path, t)
+        print(f"[parent] wrote ticket: {path}")
+        written.append(path)
+    return written
+
+
+# ────────────────────────────── main
 def main():
     once = "--once" in sys.argv
-    os.makedirs(OPEN_DIR, exist_ok=True)
-    os.makedirs(FAIL_DIR, exist_ok=True)
+    os.makedirs(OPEN_DIR,   exist_ok=True)
+    os.makedirs(FAIL_DIR,   exist_ok=True)
     os.makedirs(CLOSED_DIR, exist_ok=True)
 
-    tickets = scan_open()
-    if not tickets:
+    # ── --goal mode: A3B decomposes before dispatching
+    goal = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--goal" and i + 1 < len(sys.argv):
+            goal = sys.argv[i + 1]
+            break
+
+    if goal:
+        print(f"[parent] goal: {goal}")
+        first_n = max(
+            [int(os.path.basename(p).replace(".yaml","").split("-")[1])
+             for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR]
+             for p in glob.glob(os.path.join(d, "TASK-*.yaml"))
+             if os.path.basename(p).replace(".yaml","").split("-")[1].isdigit()],
+            default=0
+        ) + 1
+        tickets = decompose_goal(goal, first_n)
+        if not tickets:
+            print("[parent] ERROR: decomposition produced no tickets. Aborting.")
+            sys.exit(1)
+        write_decomposed_tickets(tickets)
+        print(f"[parent] decomposed into {len(tickets)} ticket(s), dispatching...")
+
+    # ── normal dispatch loop
+    tickets_paths = scan_open()
+    if not tickets_paths:
         print("[parent] no open tickets")
         return
 
-    deferred = []  # tickets whose deps were unmet this pass
+    deferred = []
 
-    for ticket_path in tickets:
+    for ticket_path in tickets_paths:
         ticket_id = os.path.basename(ticket_path).replace(".yaml", "")
         ticket    = load_ticket(ticket_path)
 
-        # ── depends_on guard ──────────────────────────────────────────
         if not deps_met(ticket):
             unmet = [d for d in (ticket.get("depends_on") or [])
                      if not os.path.exists(os.path.join(CLOSED_DIR, f"{d}.yaml"))]
@@ -168,7 +285,8 @@ def main():
             break
 
     if deferred:
-        print(f"\n[parent] {len(deferred)} ticket(s) deferred (unmet deps): {[os.path.basename(p) for p in deferred]}")
+        print(f"\n[parent] {len(deferred)} ticket(s) deferred (unmet deps): "
+              f"{[os.path.basename(p) for p in deferred]}")
 
     print("\n[parent] done")
 
