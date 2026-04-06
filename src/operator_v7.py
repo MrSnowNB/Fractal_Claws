@@ -112,14 +112,16 @@ class Operator:
     - Ticket System: Coordinate work using a hierarchical ticket system
     """
     
-    def __init__(self, base_dir: str = "."):
+    def __init__(self, base_dir: str = ".", test_mode: bool = False):
         """
         Initialize the operator.
         
         Args:
             base_dir: Base directory for the project
+            test_mode: Enable test mode (raises SystemExit instead of halting)
         """
         self.base_dir = Path(base_dir)
+        self.test_mode = test_mode
         self.tickets: Dict[str, Ticket] = {}
         self.current_ticket: Optional[Ticket] = None
         self.logger = self._setup_logging()
@@ -614,6 +616,8 @@ Open issues requiring human attention.
     
     def halt_and_wait_human(self, ticket: Ticket) -> None:
         """Stop all work and await human instruction."""
+        if self.test_mode:
+            raise SystemExit(f"[TEST_MODE] Halted on {ticket.id}")
         self.logger.critical(f"Halted on ticket {ticket.id}. See ISSUE.md for required action.")
         raise SystemExit(f"Halted on {ticket.id}. See ISSUE.md for required action.")
     

@@ -1,0 +1,86 @@
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Validate phase for ticket: TASK-004
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Validate phase for ticket: TASK-004
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Validate phase for ticket: TASK-004
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Validate phase for ticket: TASK-004
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Validate phase for ticket: TASK-004
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Validate phase for ticket: TASK-004
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Running gate: unit
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Running gate: unit
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Running gate: unit
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Running gate: unit
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Running gate: unit
+2026-04-06 07:31:46,518 - Fractal_Claws - INFO - Running gate: unit
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: lint
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: lint
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: lint
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: lint
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: lint
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: lint
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: type
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: type
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: type
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: type
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: type
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: type
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: docs
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: docs
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: docs
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: docs
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: docs
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - Running gate: docs
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - All validation gates passed
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - All validation gates passed
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - All validation gates passed
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - All validation gates passed
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - All validation gates passed
+2026-04-06 07:31:46,528 - Fractal_Claws - INFO - All validation gates passed
+2026-04-06 07:31:46,531 - Fractal_Claws - ERROR - Failure in ticket TASK-005: Test failure
+2026-04-06 07:31:46,531 - Fractal_Claws - ERROR - Failure in ticket TASK-005: Test failure
+2026-04-06 07:31:46,531 - Fractal_Claws - ERROR - Failure in ticket TASK-005: Test failure
+2026-04-06 07:31:46,531 - Fractal_Claws - ERROR - Failure in ticket TASK-005: Test failure
+2026-04-06 07:31:46,531 - Fractal_Claws - ERROR - Failure in ticket TASK-005: Test failure
+2026-04-06 07:31:46,531 - Fractal_Claws - ERROR - Failure in ticket TASK-005: Test failure
+2026-04-06 07:31:46,531 - Fractal_Claws - ERROR - Failure in ticket TASK-005: Test failure
+2026-04-06 07:31:46,532 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-005.log
+2026-04-06 07:31:46,532 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-005.log
+2026-04-06 07:31:46,532 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-005.log
+2026-04-06 07:31:46,532 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-005.log
+2026-04-06 07:31:46,532 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-005.log
+2026-04-06 07:31:46,532 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-005.log
+2026-04-06 07:31:46,532 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-005.log
+2026-04-06 07:31:46,533 - Fractal_Claws - INFO - TROUBLESHOOTING.md updated
+2026-04-06 07:31:46,533 - Fractal_Claws - INFO - TROUBLESHOOTING.md updated
+2026-04-06 07:31:46,533 - Fractal_Claws - INFO - TROUBLESHOOTING.md updated
+2026-04-06 07:31:46,533 - Fractal_Claws - INFO - TROUBLESHOOTING.md updated
+2026-04-06 07:31:46,533 - Fractal_Claws - INFO - TROUBLESHOOTING.md updated
+2026-04-06 07:31:46,533 - Fractal_Claws - INFO - TROUBLESHOOTING.md updated
+2026-04-06 07:31:46,533 - Fractal_Claws - INFO - TROUBLESHOOTING.md updated
+2026-04-06 07:31:46,535 - Fractal_Claws - INFO - REPLICATION-NOTES.md updated
+2026-04-06 07:31:46,535 - Fractal_Claws - INFO - REPLICATION-NOTES.md updated
+2026-04-06 07:31:46,535 - Fractal_Claws - INFO - REPLICATION-NOTES.md updated
+2026-04-06 07:31:46,535 - Fractal_Claws - INFO - REPLICATION-NOTES.md updated
+2026-04-06 07:31:46,535 - Fractal_Claws - INFO - REPLICATION-NOTES.md updated
+2026-04-06 07:31:46,535 - Fractal_Claws - INFO - REPLICATION-NOTES.md updated
+2026-04-06 07:31:46,535 - Fractal_Claws - INFO - REPLICATION-NOTES.md updated
+2026-04-06 07:31:46,536 - Fractal_Claws - INFO - ISSUE.md updated
+2026-04-06 07:31:46,536 - Fractal_Claws - INFO - ISSUE.md updated
+2026-04-06 07:31:46,536 - Fractal_Claws - INFO - ISSUE.md updated
+2026-04-06 07:31:46,536 - Fractal_Claws - INFO - ISSUE.md updated
+2026-04-06 07:31:46,536 - Fractal_Claws - INFO - ISSUE.md updated
+2026-04-06 07:31:46,536 - Fractal_Claws - INFO - ISSUE.md updated
+2026-04-06 07:31:46,536 - Fractal_Claws - INFO - ISSUE.md updated
+2026-04-06 07:31:46,536 - Fractal_Claws - CRITICAL - Halted on ticket TASK-005. See ISSUE.md for required action.
+2026-04-06 07:31:46,536 - Fractal_Claws - CRITICAL - Halted on ticket TASK-005. See ISSUE.md for required action.
+2026-04-06 07:31:46,536 - Fractal_Claws - CRITICAL - Halted on ticket TASK-005. See ISSUE.md for required action.
+2026-04-06 07:31:46,536 - Fractal_Claws - CRITICAL - Halted on ticket TASK-005. See ISSUE.md for required action.
+2026-04-06 07:31:46,536 - Fractal_Claws - CRITICAL - Halted on ticket TASK-005. See ISSUE.md for required action.
+2026-04-06 07:31:46,536 - Fractal_Claws - CRITICAL - Halted on ticket TASK-005. See ISSUE.md for required action.
+2026-04-06 07:31:46,536 - Fractal_Claws - CRITICAL - Halted on ticket TASK-005. See ISSUE.md for required action.
+2026-04-06 07:31:46,539 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-006.log
+2026-04-06 07:31:46,539 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-006.log
+2026-04-06 07:31:46,539 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-006.log
+2026-04-06 07:31:46,539 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-006.log
+2026-04-06 07:31:46,539 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-006.log
+2026-04-06 07:31:46,539 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-006.log
+2026-04-06 07:31:46,539 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-006.log
+2026-04-06 07:31:46,539 - Fractal_Claws - INFO - Logs captured to logs\ISS-20260406_073146-TASK-006.log
