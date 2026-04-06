@@ -11,11 +11,8 @@ Tools available to the model:
   exec_python <path>
 
 Hardware logging (AMD Ryzen AI MAX+ / Strix Halo):
-  hw_snapshot() captures:
-    - RAM / CPU via psutil
-    - GPU utilization via Windows WMI (AMD Radeon 8060S unified memory)
-    - NPU utilization via WMI compute counters
-    - Loaded model list via Lemonade /api/v1/models
+  hw_snapshot() captures RAM/CPU via psutil, GPU/NPU via WMI,
+  and loaded models via Lemonade /api/v1/models.
   Snapshots taken before + after model call. Delta written to result log.
 
 Safety: exec_python is restricted to the output/ directory.
@@ -38,29 +35,17 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
 # ────────────────────────────── hardware snapshot
 def _wmi_gpu_npu() -> dict:
-    """
-    Query Windows WMI for GPU + NPU utilization.
-    Works on AMD Radeon / XDNA2 NPU without ROCm or nvidia-smi.
-    Returns dict: gpu_util_pct, gpu_dedicated_mb, gpu_shared_mb,
-                  npu_util_pct  (None if unavailable)
-    """
     result = {"gpu_util_pct": None, "gpu_dedicated_mb": None,
-              "gpu_shared_mb": None, "npu_util_pct": None,
-              "gpu_name": None}
+              "gpu_shared_mb": None, "npu_util_pct": None, "gpu_name": None}
     try:
         import wmi
         w = wmi.WMI(namespace="root\\cimv2")
-
-        # GPU via Win32_VideoController
         for gpu in w.Win32_VideoController():
             result["gpu_name"]         = gpu.Name
             result["gpu_dedicated_mb"] = round(int(gpu.AdapterRAM or 0) / 1024**2, 1) if gpu.AdapterRAM else None
-            break  # first GPU only
-
-        # GPU utilization via perf counters
+            break
         try:
-            w2 = wmi.WMI(namespace="root\\cimv2")
-            for item in w2.query("SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"):
+            for item in w.query("SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"):
                 name = getattr(item, "Name", "") or ""
                 if "3D" in name or "Compute" in name:
                     val = getattr(item, "UtilizationPercentage", None)
@@ -69,26 +54,22 @@ def _wmi_gpu_npu() -> dict:
                         break
         except Exception:
             pass
-
-        # NPU via Win32_PerfFormattedData - look for NPU/compute accelerator
         try:
-            for item in w2.query("SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"):
+            for item in w.query("SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"):
                 name = getattr(item, "Name", "") or ""
-                if "NPU" in name.upper() or "VPU" in name.upper() or "COMPUTE" in name.upper():
+                if "NPU" in name.upper() or "VPU" in name.upper():
                     val = getattr(item, "UtilizationPercentage", None)
                     if val is not None:
                         result["npu_util_pct"] = int(val)
                         break
         except Exception:
             pass
-
     except Exception:
-        pass  # wmi not installed or query failed
+        pass
     return result
 
 
 def _lemonade_models() -> list:
-    """Query Lemonade /api/v1/models — returns list of loaded model IDs."""
     try:
         import urllib.request, json
         req = urllib.request.urlopen(f"{ENDPOINT}/models", timeout=2)
@@ -99,12 +80,7 @@ def _lemonade_models() -> list:
 
 
 def hw_snapshot() -> dict:
-    """
-    Full hardware snapshot for AMD Ryzen AI MAX+ / Strix Halo.
-    """
     snap = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S")}
-
-    # — RAM + CPU
     try:
         import psutil
         vm = psutil.virtual_memory()
@@ -113,14 +89,8 @@ def hw_snapshot() -> dict:
         snap["cpu_pct"]      = psutil.cpu_percent(interval=0.2)
     except ImportError:
         snap["ram_used_gb"] = snap["ram_total_gb"] = snap["cpu_pct"] = None
-
-    # — GPU + NPU via WMI
-    wmi_data = _wmi_gpu_npu()
-    snap.update(wmi_data)
-
-    # — Lemonade loaded models
+    snap.update(_wmi_gpu_npu())
     snap["lemonade_models"] = _lemonade_models()
-
     return snap
 
 
@@ -130,7 +100,6 @@ def format_snapshot(label: str, s: dict) -> str:
         lines.append(f"[hw:{label}] RAM {s['ram_used_gb']} / {s['ram_total_gb']} GB  CPU {s['cpu_pct']}%")
     else:
         lines.append(f"[hw:{label}] RAM unavailable (psutil not installed)")
-
     gpu_name = s.get("gpu_name") or "unknown"
     gpu_util = s.get("gpu_util_pct")
     gpu_ded  = s.get("gpu_dedicated_mb")
@@ -138,16 +107,10 @@ def format_snapshot(label: str, s: dict) -> str:
         lines.append(f"[hw:{label}] GPU '{gpu_name}'  util={gpu_util}%  dedicated={gpu_ded} MB")
     else:
         lines.append(f"[hw:{label}] GPU '{gpu_name}'  util=unavailable (wmi query failed)")
-
     npu_util = s.get("npu_util_pct")
-    if npu_util is not None:
-        lines.append(f"[hw:{label}] NPU util={npu_util}%")
-    else:
-        lines.append(f"[hw:{label}] NPU util=unavailable")
-
+    lines.append(f"[hw:{label}] NPU util={npu_util if npu_util is not None else 'unavailable'}%")
     models = s.get("lemonade_models") or []
     lines.append(f"[hw:{label}] Lemonade loaded={models if models else 'none/unreachable'}")
-
     return "\n".join(lines)
 
 
@@ -276,7 +239,8 @@ Rules:
 1. Start your response with the first TOOL: line. No words before it.
 2. No indentation. Every line starts at column 0.
 3. exec_python paths must be inside output/
-4. After the last tool block write: DONE
+4. ALWAYS write_file before exec_python when writing and running the same file.
+5. After the last tool block write: DONE
 """
 
 
@@ -316,9 +280,8 @@ def main():
 
     context     = build_context(ticket)
     user_prompt = build_user_prompt(ticket, context)
-    system_msg  = "Output ONLY raw tool blocks starting at column 0. No markdown. No prose. No indentation."
+    system_msg  = "Output ONLY raw tool blocks starting at column 0. No markdown. No prose. No indentation. Always write_file before exec_python on the same path."
 
-    # ── hardware snapshot BEFORE
     hw_pre = hw_snapshot()
     print(format_snapshot("pre", hw_pre))
 
@@ -336,7 +299,6 @@ def main():
     )
     elapsed = round(time.perf_counter() - t0, 2)
 
-    # ── hardware snapshot AFTER
     hw_post = hw_snapshot()
     print(format_snapshot("post", hw_post))
 

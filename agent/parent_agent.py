@@ -5,21 +5,13 @@ parent_agent.py — Fractal Claws parent agent.
 Usage:
     python agent/parent_agent.py                        # dispatch all open tickets
     python agent/parent_agent.py --once                 # dispatch one ticket then exit
-    python agent/parent_agent.py --goal "<plain English goal>"
-        # A3B decomposes goal into tickets, writes to tickets/open/, then dispatches
+    python agent/parent_agent.py --goal "<goal>"        # A3B decomposes goal into tickets
 
-A3B decompose model: Qwen3.5-35B-A3B-GGUF (must be active in Lemonade)
-Child execution model: Qwen3.5-4B-GGUF
+Model roles:
+    DECOMPOSE_MODEL  Qwen3.5-35B-A3B-GGUF  — goal decomposition (parent)
+    CHILD_MODEL      Qwen3.5-4B-GGUF       — ticket execution (child)
 
-Depends-on logic:
-  Before dispatching, all depends_on ticket_ids must exist in tickets/closed/.
-  Unmet deps are deferred and reported at end of pass.
-
-Result evaluation:
-  PASS — result log exists, non-empty, no ERROR lines, returncode 0 if present
-  FAIL — result log missing, empty, contains ERROR, or non-zero returncode
-
-On FAIL: retry with depth+1 up to per-ticket max_depth (default 1, locked).
+Both models are pre-warmed at startup to prevent Lemonade slot eviction.
 """
 import sys
 import os
@@ -30,17 +22,42 @@ import glob
 import yaml
 from openai import OpenAI
 
-CHILD        = os.path.join(os.path.dirname(__file__), "child_agent.py")
-OPEN_DIR     = "tickets/open"
-CLOSED_DIR   = "tickets/closed"
-FAIL_DIR     = "tickets/failed"
+CHILD             = os.path.join(os.path.dirname(__file__), "child_agent.py")
+OPEN_DIR          = "tickets/open"
+CLOSED_DIR        = "tickets/closed"
+FAIL_DIR          = "tickets/failed"
 DEFAULT_MAX_DEPTH = 1
 
-ENDPOINT     = "http://localhost:8000/api/v1"
-API_KEY      = "x"
-DECOMPOSE_MODEL = "Qwen3.5-35B-A3B-GGUF"
+ENDPOINT          = "http://localhost:8000/api/v1"
+API_KEY           = "x"
+DECOMPOSE_MODEL   = "Qwen3.5-35B-A3B-GGUF"
+CHILD_MODEL       = "Qwen3.5-4B-GGUF"
 
 client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
+
+
+# ────────────────────────────── pre-warm
+PREWARM_MODELS = [DECOMPOSE_MODEL, CHILD_MODEL]
+
+def prewarm_models():
+    """
+    Send a 1-token completion to each model at startup.
+    Forces Lemonade to load both into unified RAM before any real work,
+    preventing mid-dispatch slot eviction and RAM swap.
+    """
+    print("[parent] pre-warming models...")
+    for model in PREWARM_MODELS:
+        try:
+            client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=1,
+                timeout=60,
+            )
+            print(f"[parent] warm OK: {model}")
+        except Exception as e:
+            print(f"[parent] warm FAILED: {model} — {e}")
+    print("[parent] pre-warm done")
 
 
 # ────────────────────────────── ticket helpers
@@ -107,7 +124,6 @@ def scan_open() -> list:
 
 
 def next_ticket_id() -> str:
-    """Generate next TASK-NNN id by scanning open + closed directories."""
     existing = []
     for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR]:
         for p in glob.glob(os.path.join(d, "TASK-*.yaml")):
@@ -116,27 +132,29 @@ def next_ticket_id() -> str:
                 existing.append(int(base.split("-")[1]))
             except (IndexError, ValueError):
                 pass
-    n = max(existing, default=0) + 1
-    return f"TASK-{n:03d}"
+    return f"TASK-{max(existing, default=0) + 1:03d}"
 
 
 # ────────────────────────────── A3B goal decomposition
 DECOMPOSE_SYSTEM = """\
 You are a task decomposer for an autonomous agent system.
-Given a plain-English goal, decompose it into a minimal ordered list of atomic tickets.
+Given a plain-English goal, output a YAML list of atomic tickets.
 
 Rules:
-- Each ticket must be completable in 1-2 tool calls by a small model.
+- Each ticket must be completable in 1-2 tool calls.
 - Available tools per ticket: write_file, exec_python, read_file.
 - exec_python paths must be inside output/
-- Use depends_on to express sequential dependencies.
-- Output ONLY a YAML list. No prose, no markdown fences, no explanation.
+- CRITICAL: write_file MUST appear before exec_python when writing and running the same file.
+- Use depends_on to express sequential dependencies between tickets.
+- Output ONLY valid YAML. No prose, no markdown fences, no explanation.
+- Be concise — use minimal tokens per ticket field.
 
-Output format (repeat for each ticket):
+Output format:
 - ticket_id: TASK-NNN
   title: <short title>
-  task: <single sentence instruction>
-  depends_on: []  # or list of ticket_ids
+  task: >-
+    <single sentence: what to do, what file to write, what to run>
+  depends_on: []
   allowed_tools:
     - name: write_file
     - name: exec_python
@@ -144,33 +162,29 @@ Output format (repeat for each ticket):
 
 
 def decompose_goal(goal: str, first_id_n: int) -> list:
-    """
-    Call A3B to decompose goal into ticket dicts.
-    Returns list of ticket dicts with ticket_id, title, task, depends_on, allowed_tools.
-    """
     print(f"[parent] calling A3B to decompose goal...")
-    user_prompt = f"Goal: {goal}\n\nStart ticket numbering from TASK-{first_id_n:03d}."
-
+    user_prompt = (
+        f"Goal: {goal}\n\n"
+        f"Start ticket numbering from TASK-{first_id_n:03d}.\n"
+        f"Output ONLY the YAML list. No extra text."
+    )
     response = client.chat.completions.create(
         model=DECOMPOSE_MODEL,
         messages=[
             {"role": "system", "content": DECOMPOSE_SYSTEM},
             {"role": "user",   "content": user_prompt},
         ],
-        max_tokens=2048,
+        max_tokens=4096,
         temperature=0.1,
-        timeout=120,
+        timeout=180,
     )
-
-    raw = response.choices[0].message.content or ""
+    raw  = response.choices[0].message.content or ""
     used = response.usage.total_tokens if response.usage else 0
     print(f"[parent] A3B responded ({used} tokens)")
-    print(f"[parent] A3B raw:\n{raw[:1200]}")
+    print(f"[parent] A3B raw:\n{raw[:2000]}")
 
-    # Strip markdown fences if present
     cleaned = re.sub(r'^```[\w]*\n?', '', raw.strip(), flags=re.MULTILINE)
     cleaned = re.sub(r'```$', '', cleaned.strip())
-
     try:
         tickets = yaml.safe_load(cleaned)
         if not isinstance(tickets, list):
@@ -184,20 +198,19 @@ def decompose_goal(goal: str, first_id_n: int) -> list:
 
 
 def write_decomposed_tickets(tickets: list) -> list:
-    """Write ticket dicts to tickets/open/. Returns list of written paths."""
     os.makedirs(OPEN_DIR, exist_ok=True)
     written = []
     for t in tickets:
         tid = t.get("ticket_id", next_ticket_id())
-        t.setdefault("status",     "open")
-        t.setdefault("depth",      0)
-        t.setdefault("max_depth",  1)
-        t.setdefault("created_at", time.strftime("%Y-%m-%d"))
-        t.setdefault("updated_at", time.strftime("%Y-%m-%d"))
-        t.setdefault("result_path", f"logs/{tid}-result.txt")
-        t.setdefault("max_tokens",  512)
+        t.setdefault("status",          "open")
+        t.setdefault("depth",           0)
+        t.setdefault("max_depth",       1)
+        t.setdefault("created_at",      time.strftime("%Y-%m-%d"))
+        t.setdefault("updated_at",      time.strftime("%Y-%m-%d"))
+        t.setdefault("result_path",     f"logs/{tid}-result.txt")
+        t.setdefault("max_tokens",      512)
         t.setdefault("timeout_seconds", 60)
-        t.setdefault("context_files", [])
+        t.setdefault("context_files",   [])
         path = os.path.join(OPEN_DIR, f"{tid}.yaml")
         save_ticket(path, t)
         print(f"[parent] wrote ticket: {path}")
@@ -212,7 +225,10 @@ def main():
     os.makedirs(FAIL_DIR,   exist_ok=True)
     os.makedirs(CLOSED_DIR, exist_ok=True)
 
-    # ── --goal mode: A3B decomposes before dispatching
+    # ── pre-warm both models before any dispatch
+    prewarm_models()
+
+    # ── --goal mode
     goal = None
     for i, arg in enumerate(sys.argv):
         if arg == "--goal" and i + 1 < len(sys.argv):
@@ -222,10 +238,10 @@ def main():
     if goal:
         print(f"[parent] goal: {goal}")
         first_n = max(
-            [int(os.path.basename(p).replace(".yaml","").split("-")[1])
+            [int(os.path.basename(p).replace(".yaml", "").split("-")[1])
              for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR]
              for p in glob.glob(os.path.join(d, "TASK-*.yaml"))
-             if os.path.basename(p).replace(".yaml","").split("-")[1].isdigit()],
+             if os.path.basename(p).replace(".yaml", "").split("-")[1].isdigit()],
             default=0
         ) + 1
         tickets = decompose_goal(goal, first_n)
@@ -235,15 +251,15 @@ def main():
         write_decomposed_tickets(tickets)
         print(f"[parent] decomposed into {len(tickets)} ticket(s), dispatching...")
 
-    # ── normal dispatch loop
-    tickets_paths = scan_open()
-    if not tickets_paths:
+    # ── dispatch loop
+    ticket_paths = scan_open()
+    if not ticket_paths:
         print("[parent] no open tickets")
         return
 
     deferred = []
 
-    for ticket_path in tickets_paths:
+    for ticket_path in ticket_paths:
         ticket_id = os.path.basename(ticket_path).replace(".yaml", "")
         ticket    = load_ticket(ticket_path)
 
@@ -255,7 +271,6 @@ def main():
             continue
 
         print(f"\n[parent] === dispatching {ticket_id} ===")
-
         depth     = int(ticket.get("depth", 0))
         max_depth = int(ticket.get("max_depth", DEFAULT_MAX_DEPTH))
 
