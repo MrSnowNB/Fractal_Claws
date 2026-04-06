@@ -7,13 +7,11 @@ Usage:
 
 Tools available to the model:
   read_file   <path>
-  write_file  <path>
-  <content>
-  END
+  write_file  <path> / CONTENT: ... / END
   exec_python <path>
 
-The model emits tool calls in its response. This agent parses and
-executes them in sequence, then writes a summary to result_path.
+The model emits tool calls in its response. This agent normalises
+indentation, parses blocks, executes them, and writes a summary.
 
 Safety: exec_python is restricted to the output/ directory.
 """
@@ -28,7 +26,7 @@ from openai import OpenAI
 MODEL    = "Qwen3.5-4B-GGUF"
 ENDPOINT = "http://localhost:8000/api/v1"
 API_KEY  = "x"
-EXEC_DIR = "output"  # exec_python is sandboxed to this directory
+EXEC_DIR = "output"
 
 client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
@@ -65,9 +63,8 @@ def tool_write_file(path: str, content: str) -> str:
 
 
 def tool_exec_python(path: str, timeout: int = 30) -> str:
-    # Safety: only allow execution from output/ directory
-    abs_path   = os.path.abspath(path)
-    abs_exec   = os.path.abspath(EXEC_DIR)
+    abs_path = os.path.abspath(path)
+    abs_exec = os.path.abspath(EXEC_DIR)
     if not abs_path.startswith(abs_exec):
         return f"ERROR: exec_python blocked — path must be inside {EXEC_DIR}/ (got {path})"
     if not os.path.exists(abs_path):
@@ -77,13 +74,11 @@ def tool_exec_python(path: str, timeout: int = 30) -> str:
             [sys.executable, abs_path],
             capture_output=True, text=True, timeout=timeout
         )
-        out = result.stdout.strip()
-        err = result.stderr.strip()
         lines = []
-        if out:
-            lines.append(f"STDOUT:\n{out}")
-        if err:
-            lines.append(f"STDERR:\n{err}")
+        if result.stdout.strip():
+            lines.append(f"STDOUT:\n{result.stdout.strip()}")
+        if result.stderr.strip():
+            lines.append(f"STDERR:\n{result.stderr.strip()}")
         lines.append(f"returncode: {result.returncode}")
         return "\n".join(lines)
     except subprocess.TimeoutExpired:
@@ -92,24 +87,27 @@ def tool_exec_python(path: str, timeout: int = 30) -> str:
         return f"ERROR: exec_python failed: {e}"
 
 
-# ────────────────────────────── tool call parser
+# ────────────────────────────── parser
+def normalise(text: str) -> str:
+    """Strip leading whitespace from every line so indented blocks still match."""
+    return "\n".join(line.lstrip() for line in text.splitlines())
+
+
 BLOCK_RE = re.compile(
     r'TOOL:\s*(\S+)\s*\nPATH:\s*(\S+)\s*\n(?:CONTENT:\n([\s\S]*?)\nEND|END)',
     re.MULTILINE
 )
 
+
 def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
-    """
-    Parse tool calls from model response and execute them.
-    Returns list of (tool, path, result) tuples.
-    """
+    normalised = normalise(response_text)
     results = []
-    for match in BLOCK_RE.finditer(response_text):
+    for match in BLOCK_RE.finditer(normalised):
         tool    = match.group(1).strip()
         path    = match.group(2).strip()
-        content = match.group(3)  # None for read_file / exec_python
+        content = match.group(3)
 
-        print(f"[child] tool: {tool} path: {path}")
+        print(f"[child] tool: {tool}  path: {path}")
 
         if tool == "read_file":
             result = tool_read_file(path)
@@ -122,35 +120,36 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
 
         print(f"[child] result: {result[:120]}")
         results.append((tool, path, result))
-
     return results
 
 
-# ────────────────────────────── prompt builders
-TOOL_SYNTAX = """You have these tools. Use them by emitting blocks exactly as shown.
+# ────────────────────────────── prompt
+TOOL_SYNTAX = """\
+You are a tool-calling agent. Output ONLY raw tool blocks — no prose, no markdown, no indentation.
 
-read_file:
-  TOOL: read_file
-  PATH: <path>
-  END
+Available tools:
 
-write_file:
-  TOOL: write_file
-  PATH: <path>
-  CONTENT:
-  <file content here>
-  END
+TOOL: read_file
+PATH: <path>
+END
 
-exec_python:
-  TOOL: exec_python
-  PATH: <path>
-  END
+TOOL: write_file
+PATH: <path>
+CONTENT:
+<file content>
+END
+
+TOOL: exec_python
+PATH: <path>
+END
 
 Rules:
-- exec_python may only reference files inside output/
-- Emit tool blocks only. No prose before or after.
-- After all tools, write one final line: DONE
+1. Start your response with the first TOOL: line. No words before it.
+2. No indentation. Every line starts at column 0.
+3. exec_python paths must be inside output/
+4. After the last tool block write: DONE
 """
+
 
 def build_context(ticket: dict) -> str:
     parts = []
@@ -161,7 +160,7 @@ def build_context(ticket: dict) -> str:
 
 def build_user_prompt(ticket: dict, context: str) -> str:
     prompt = TOOL_SYNTAX
-    prompt += f"\nTask:\n{ticket['task']}"
+    prompt += f"\nTask: {ticket['task']}"
     if context.strip():
         prompt += f"\n\nContext:\n{context}"
     return prompt
@@ -178,7 +177,6 @@ def main():
         print(f"ERROR: ticket not found: {ticket_path}")
         sys.exit(1)
 
-    # 1. Load
     ticket    = load_ticket(ticket_path)
     ticket_id = ticket.get("ticket_id", os.path.basename(ticket_path))
     print(f"[child] loaded ticket: {ticket_id}")
@@ -187,17 +185,15 @@ def main():
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, os.path.basename(ticket_path))
 
-    # 2. Build prompt
     context     = build_context(ticket)
     user_prompt = build_user_prompt(ticket, context)
-    system_prompt = "You are a code-executing agent. Follow the tool syntax exactly. No markdown fences."
+    system_msg  = "Output ONLY raw tool blocks starting at column 0. No markdown. No prose. No indentation."
 
-    # 3. Call model
     print(f"[child] calling model: {MODEL}")
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_msg},
             {"role": "user",   "content": user_prompt},
         ],
         max_tokens=ticket.get("max_tokens", 1024),
@@ -209,13 +205,11 @@ def main():
     used = response.usage.total_tokens if response.usage else 0
     why  = response.choices[0].finish_reason
     print(f"[child] responded ({used} tokens, finish={why})")
-    print(f"[child] raw:\n{raw[:600]}")
+    print(f"[child] raw:\n{raw[:800]}")
 
-    # 4. Parse and run tools
     os.makedirs(EXEC_DIR, exist_ok=True)
     tool_results = parse_and_run_tools(raw, exec_timeout=ticket.get("timeout_seconds", 30))
 
-    # 5. Write result summary
     result_path = ticket.get("result_path", "logs/result.txt")
     os.makedirs(os.path.dirname(result_path) if os.path.dirname(result_path) else ".", exist_ok=True)
 
@@ -231,12 +225,10 @@ def main():
         summary_lines.append("raw response:")
         summary_lines.append(raw)
 
-    summary = "\n".join(summary_lines)
     with open(result_path, "w", encoding="utf-8") as f:
-        f.write(summary)
+        f.write("\n".join(summary_lines))
     print(f"[child] wrote: {result_path}")
 
-    # 6. Close ticket
     os.replace(ticket_path, dest)
     ticket["status"]     = "closed"
     ticket["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
