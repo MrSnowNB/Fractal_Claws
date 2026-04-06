@@ -28,61 +28,12 @@ DEFAULT_MODEL = "Qwen3-Coder-Next-GGUF"
 KNOWN_MODELS = {
     "hermes": "user.Hermes-3-Llama-3.1-8B-GGUF",
     "qwen":   "Qwen3-Coder-Next-GGUF",
-<<<<<<< HEAD
     "4b":     "Qwen3.5-4B-GGUF",       # ← child node
-=======
->>>>>>> cd9ed7f3b7be83a41207d0ed364f4dca246da421
     "35b":    "Qwen3.5-35B-A3B-GGUF",
     "a3b":    "Qwen3.5-35B-A3B-GGUF",
 }
 
-<<<<<<< HEAD
   # ← corrected
-=======
-# VSCode settings.json locations — checked in order, first found wins
-SETTINGS_PATHS = [
-    Path.home() / "AppData" / "Roaming" / "Code" / "User" / "settings.json",
-    Path.home() / ".config" / "Code" / "User" / "settings.json",  # Linux
-    Path.home() / "Library" / "Application Support" / "Code" / "User" / "settings.json",  # macOS
-]
-
-# Cline settings.json key for the model ID
-CLINE_MODEL_KEY = "cline.apiModelId"
-
-
-def find_settings() -> Path | None:
-    for p in SETTINGS_PATHS:
-        if p.exists():
-            return p
-    return None
-
-
-def update_cline_settings(model: str) -> None:
-    path = find_settings()
-    if not path:
-        print("[pre_flight] ⚠ Could not find VSCode settings.json — update Cline model manually.")
-        return
-
-    try:
-        raw = path.read_text(encoding="utf-8")
-
-        # settings.json may have comments (JSONC) — strip // comments for parsing
-        stripped = re.sub(r'(?m)^\s*//.*$', '', raw)
-        stripped = re.sub(r',\s*([}\]])', r'\1', stripped)  # trailing commas
-
-        data = json.loads(stripped)
-        old = data.get(CLINE_MODEL_KEY, "<not set>")
-        data[CLINE_MODEL_KEY] = model
-
-        # Write back — pretty-printed, preserving indent style
-        path.write_text(json.dumps(data, indent=4), encoding="utf-8")
-        print(f"[pre_flight] ✓ Cline settings updated: '{old}' → '{model}'")
-        print(f"[pre_flight]   ({path})")
-    except Exception as e:
-        print(f"[pre_flight] ⚠ Failed to update settings.json: {e}")
-        print(f"[pre_flight]   Set '{CLINE_MODEL_KEY}': '{model}' manually.")
-
->>>>>>> cd9ed7f3b7be83a41207d0ed364f4dca246da421
 
 def resolve_model(arg: str) -> str:
     return KNOWN_MODELS.get(arg.lower(), arg)
