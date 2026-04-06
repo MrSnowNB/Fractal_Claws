@@ -13,6 +13,7 @@ No browser. No shell. No network. No code interpreter.
 """
 import sys
 import os
+import re
 import time
 import yaml
 from openai import OpenAI
