@@ -1,43 +1,64 @@
 ---
-title: Qwen3-Coder-Next Orchestrator Rules
-version: "1.0"
+title: Qwen3.5-4B — Parent Agent Rules
+version: "2.0"
 scope: workspace
-applies_to: orchestrator
-model: "Qwen3-Coder-Next-GGUF"
+applies_to: parent_agent
+model: "Qwen3.5-4B-GGUF"
 ---
 
-# Qwen3-Coder-Next Orchestrator Rules
+# Qwen3.5-4B Parent Agent Rules
+
+## Model
+
+This harness runs **one model only**: `Qwen3.5-4B-GGUF` via `http://localhost:11434/v1`.
+
+Do not reference, load, or delegate to any other model. There is no 35B slot. There is no leaf/NPU slot. There is no swarm.
 
 ## Thinking Budget
 
-- **Plan phase**: Full `<think>` blocks enabled — required for task decomposition and spec drafting
-- **Build phase**: Suppress thinking for file writes and terminal commands — append `/no_think` to tool instructions
-- **Validate phase**: Enable thinking only when interpreting ambiguous gate output
-- **Review and Release**: No thinking required — responses are bounded and factual
+- **Plan phase**: `<think>` blocks allowed — use for ticket decomposition only
+- **Build phase**: Suppress thinking — append `/no_think` to tool instructions
+- **All other phases**: No thinking blocks
 
-Rationale: `<think>` blocks consume context at ~4-8x the rate of direct output. On a 128K context window, unconstrained thinking in Build phase exhausts the budget before the task completes.
+Rationale: 4B context window is 8K tokens. Unconstrained thinking exhausts it before the task completes.
 
 ## Tool Call Discipline
 
-- Issue **one tool call at a time** — wait for the result before issuing the next
-- Never chain tool calls speculatively
-- If a tool call result is ambiguous, evaluate before proceeding — do not assume success
+- **One tool call per turn.** Wait for result before issuing next.
+- Never chain tool calls speculatively.
+- If result is ambiguous — stop, evaluate, then proceed.
+- **Max retries: 2.** On the second failure, write ISSUE.md and halt. Do not attempt a third — YOLO mode terminates at 3.
 
-## Context Management
+## Forbidden Actions
 
-- At 60% context utilization: write a checkpoint summary to `CHECKPOINT.md` and continue
-- At 80% context utilization: halt, summarize state to `CHECKPOINT.md`, alert human
-- Never attempt to continue a task that cannot be completed within the remaining context budget
+- Do NOT install packages (`pip install`, `npm install`, etc.)
+- Do NOT register or start MCP servers
+- Do NOT modify Cline config files or VSCode settings (pre_flight.py handles this)
+- Do NOT use browser, web_fetch, or computer_use tools
+- Do NOT spawn more than one child per ticket
+- Do NOT write to `tickets/closed/` directly — child_agent.py does that
 
 ## Sub-Agent Delegation
 
-When delegating to LFM2.5 sub-agents:
-- Pass a fully-specified task description — sub-agents do not have access to prior orchestrator context
-- Include the relevant file paths, expected output format (Markdown/YAML), and success criteria
-- Sub-agent output must be validated before the orchestrator uses it
+When spawning `agent/child_agent.py`:
+
+1. Write a complete ticket YAML to `tickets/open/` using `tickets/template.yaml` as schema
+2. Verify `context_files` exist before spawning
+3. Verify `result_path` is set
+4. Run: `python agent/child_agent.py tickets/open/<id>.yaml`
+5. Poll `tickets/closed/<id>.yaml` for status
+6. Read `result_path` for the output
+
+Child has **two tools only**: `read_file` and `write_file`. Do not instruct it to do anything that requires a third tool.
+
+## Context Management
+
+- At 60% context: write `CHECKPOINT.md`, continue
+- At 80% context: halt, alert human
+- Never continue a task that cannot complete in remaining budget
 
 ## Response Format
 
-- All responses to the human are in Markdown
-- All file outputs comply with the file format policy (00-policy.md)
-- Never produce raw JSON, plain text, or unstructured output as a deliverable
+- All file outputs: Markdown with YAML frontmatter, or pure YAML
+- No raw JSON, plain text, or unstructured deliverables
+- No markdown in the `task` field of a ticket YAML
