@@ -10,8 +10,9 @@ Tools available to the model:
   write_file  <path> / CONTENT: ... / END
   exec_python <path>
 
-The model emits tool calls in its response. This agent normalises
-indentation, parses blocks, executes them, and writes a summary.
+Hardware logging:
+  hw_snapshot() captures RAM, CPU %, and GPU VRAM (via nvidia-smi if available)
+  before and after the model call. Delta is written into the result log.
 
 Safety: exec_python is restricted to the output/ directory.
 """
@@ -29,6 +30,77 @@ API_KEY  = "x"
 EXEC_DIR = "output"
 
 client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
+
+
+# ────────────────────────────── hardware snapshot
+def hw_snapshot() -> dict:
+    """
+    Capture current hardware state.
+    Returns dict with keys: ts, ram_used_gb, ram_total_gb, cpu_pct,
+                             gpu_vram_used_mb, gpu_vram_total_mb, gpu_name.
+    GPU fields are None if nvidia-smi is unavailable.
+    """
+    import platform
+    snap = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S")}
+
+    # — RAM via psutil (preferred) or fallback
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        snap["ram_used_gb"]  = round(vm.used  / 1024**3, 2)
+        snap["ram_total_gb"] = round(vm.total / 1024**3, 2)
+        snap["cpu_pct"]      = psutil.cpu_percent(interval=0.2)
+    except ImportError:
+        snap["ram_used_gb"]  = None
+        snap["ram_total_gb"] = None
+        snap["cpu_pct"]      = None
+
+    # — GPU via nvidia-smi
+    snap["gpu_name"]          = None
+    snap["gpu_vram_used_mb"]  = None
+    snap["gpu_vram_total_mb"] = None
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi",
+             "--query-gpu=name,memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            stderr=subprocess.DEVNULL, timeout=5, text=True
+        ).strip().splitlines()[0]
+        parts = [p.strip() for p in out.split(",")]
+        snap["gpu_name"]          = parts[0]
+        snap["gpu_vram_used_mb"]  = int(parts[1])
+        snap["gpu_vram_total_mb"] = int(parts[2])
+    except Exception:
+        pass  # nvidia-smi absent or failed — silently skip
+
+    return snap
+
+
+def format_snapshot(label: str, s: dict) -> str:
+    lines = [f"[hw:{label}] ts={s['ts']}"]
+    if s["ram_used_gb"] is not None:
+        lines.append(f"[hw:{label}] RAM {s['ram_used_gb']} / {s['ram_total_gb']} GB  CPU {s['cpu_pct']}%")
+    else:
+        lines.append(f"[hw:{label}] RAM unavailable (psutil not installed)")
+    if s["gpu_vram_used_mb"] is not None:
+        lines.append(f"[hw:{label}] GPU '{s['gpu_name']}'  VRAM {s['gpu_vram_used_mb']} / {s['gpu_vram_total_mb']} MB")
+    else:
+        lines.append(f"[hw:{label}] GPU unavailable (nvidia-smi not found)")
+    return "\n".join(lines)
+
+
+def format_delta(pre: dict, post: dict, elapsed_s: float, tokens: int) -> str:
+    lines = [f"[hw:delta] elapsed={elapsed_s:.2f}s  tokens={tokens}"]
+    if pre["ram_used_gb"] is not None and post["ram_used_gb"] is not None:
+        ram_delta = round(post["ram_used_gb"] - pre["ram_used_gb"], 2)
+        lines.append(f"[hw:delta] RAM delta={ram_delta:+.2f} GB")
+    if pre["gpu_vram_used_mb"] is not None and post["gpu_vram_used_mb"] is not None:
+        vram_delta = post["gpu_vram_used_mb"] - pre["gpu_vram_used_mb"]
+        lines.append(f"[hw:delta] VRAM delta={vram_delta:+d} MB")
+    if tokens and elapsed_s > 0:
+        tps = round(tokens / elapsed_s, 1)
+        lines.append(f"[hw:delta] throughput={tps} tok/s")
+    return "\n".join(lines)
 
 
 # ────────────────────────────── ticket helpers
@@ -89,7 +161,6 @@ def tool_exec_python(path: str, timeout: int = 30) -> str:
 
 # ────────────────────────────── parser
 def normalise(text: str) -> str:
-    """Strip leading whitespace from every line so indented blocks still match."""
     return "\n".join(line.lstrip() for line in text.splitlines())
 
 
@@ -189,7 +260,12 @@ def main():
     user_prompt = build_user_prompt(ticket, context)
     system_msg  = "Output ONLY raw tool blocks starting at column 0. No markdown. No prose. No indentation."
 
+    # ── hardware snapshot BEFORE model call
+    hw_pre = hw_snapshot()
+    print(format_snapshot("pre", hw_pre))
+
     print(f"[child] calling model: {MODEL}")
+    t0 = time.perf_counter()
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -200,11 +276,17 @@ def main():
         temperature=0.1,
         timeout=ticket.get("timeout_seconds", 120),
     )
+    elapsed = round(time.perf_counter() - t0, 2)
+
+    # ── hardware snapshot AFTER model call
+    hw_post = hw_snapshot()
+    print(format_snapshot("post", hw_post))
 
     raw  = response.choices[0].message.content or ""
     used = response.usage.total_tokens if response.usage else 0
     why  = response.choices[0].finish_reason
-    print(f"[child] responded ({used} tokens, finish={why})")
+    print(f"[child] responded ({used} tokens, finish={why}, elapsed={elapsed}s)")
+    print(format_delta(hw_pre, hw_post, elapsed, used))
     print(f"[child] raw:\n{raw[:800]}")
 
     os.makedirs(EXEC_DIR, exist_ok=True)
@@ -213,7 +295,21 @@ def main():
     result_path = ticket.get("result_path", "logs/result.txt")
     os.makedirs(os.path.dirname(result_path) if os.path.dirname(result_path) else ".", exist_ok=True)
 
-    summary_lines = [f"ticket: {ticket_id}", f"finish: {why}", f"tokens: {used}", ""]
+    # ── build result log with hardware section
+    summary_lines = [
+        f"ticket: {ticket_id}",
+        f"finish: {why}",
+        f"tokens: {used}",
+        f"elapsed_s: {elapsed}",
+        "",
+        "=== hardware ===",
+        format_snapshot("pre",  hw_pre),
+        format_snapshot("post", hw_post),
+        format_delta(hw_pre, hw_post, elapsed, used),
+        "",
+        "=== tool results ===",
+    ]
+
     if tool_results:
         for tool, path, result in tool_results:
             summary_lines.append(f"[{tool}] {path}")
