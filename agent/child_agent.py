@@ -10,9 +10,13 @@ Tools available to the model:
   write_file  <path> / CONTENT: ... / END
   exec_python <path>
 
-Hardware logging:
-  hw_snapshot() captures RAM, CPU %, and GPU VRAM (via nvidia-smi if available)
-  before and after the model call. Delta is written into the result log.
+Hardware logging (AMD Ryzen AI MAX+ / Strix Halo):
+  hw_snapshot() captures:
+    - RAM / CPU via psutil
+    - GPU utilization via Windows WMI (AMD Radeon 8060S unified memory)
+    - NPU utilization via WMI compute counters
+    - Loaded model list via Lemonade /api/v1/models
+  Snapshots taken before + after model call. Delta written to result log.
 
 Safety: exec_python is restricted to the output/ directory.
 """
@@ -33,17 +37,74 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
 
 # ────────────────────────────── hardware snapshot
+def _wmi_gpu_npu() -> dict:
+    """
+    Query Windows WMI for GPU + NPU utilization.
+    Works on AMD Radeon / XDNA2 NPU without ROCm or nvidia-smi.
+    Returns dict: gpu_util_pct, gpu_dedicated_mb, gpu_shared_mb,
+                  npu_util_pct  (None if unavailable)
+    """
+    result = {"gpu_util_pct": None, "gpu_dedicated_mb": None,
+              "gpu_shared_mb": None, "npu_util_pct": None,
+              "gpu_name": None}
+    try:
+        import wmi
+        w = wmi.WMI(namespace="root\\cimv2")
+
+        # GPU via Win32_VideoController
+        for gpu in w.Win32_VideoController():
+            result["gpu_name"]         = gpu.Name
+            result["gpu_dedicated_mb"] = round(int(gpu.AdapterRAM or 0) / 1024**2, 1) if gpu.AdapterRAM else None
+            break  # first GPU only
+
+        # GPU utilization via perf counters
+        try:
+            w2 = wmi.WMI(namespace="root\\cimv2")
+            for item in w2.query("SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"):
+                name = getattr(item, "Name", "") or ""
+                if "3D" in name or "Compute" in name:
+                    val = getattr(item, "UtilizationPercentage", None)
+                    if val is not None:
+                        result["gpu_util_pct"] = int(val)
+                        break
+        except Exception:
+            pass
+
+        # NPU via Win32_PerfFormattedData - look for NPU/compute accelerator
+        try:
+            for item in w2.query("SELECT * FROM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"):
+                name = getattr(item, "Name", "") or ""
+                if "NPU" in name.upper() or "VPU" in name.upper() or "COMPUTE" in name.upper():
+                    val = getattr(item, "UtilizationPercentage", None)
+                    if val is not None:
+                        result["npu_util_pct"] = int(val)
+                        break
+        except Exception:
+            pass
+
+    except Exception:
+        pass  # wmi not installed or query failed
+    return result
+
+
+def _lemonade_models() -> list:
+    """Query Lemonade /api/v1/models — returns list of loaded model IDs."""
+    try:
+        import urllib.request, json
+        req = urllib.request.urlopen(f"{ENDPOINT}/models", timeout=2)
+        data = json.loads(req.read())
+        return [m["id"] for m in data.get("data", [])]
+    except Exception:
+        return []
+
+
 def hw_snapshot() -> dict:
     """
-    Capture current hardware state.
-    Returns dict with keys: ts, ram_used_gb, ram_total_gb, cpu_pct,
-                             gpu_vram_used_mb, gpu_vram_total_mb, gpu_name.
-    GPU fields are None if nvidia-smi is unavailable.
+    Full hardware snapshot for AMD Ryzen AI MAX+ / Strix Halo.
     """
-    import platform
     snap = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
-    # — RAM via psutil (preferred) or fallback
+    # — RAM + CPU
     try:
         import psutil
         vm = psutil.virtual_memory()
@@ -51,55 +112,55 @@ def hw_snapshot() -> dict:
         snap["ram_total_gb"] = round(vm.total / 1024**3, 2)
         snap["cpu_pct"]      = psutil.cpu_percent(interval=0.2)
     except ImportError:
-        snap["ram_used_gb"]  = None
-        snap["ram_total_gb"] = None
-        snap["cpu_pct"]      = None
+        snap["ram_used_gb"] = snap["ram_total_gb"] = snap["cpu_pct"] = None
 
-    # — GPU via nvidia-smi
-    snap["gpu_name"]          = None
-    snap["gpu_vram_used_mb"]  = None
-    snap["gpu_vram_total_mb"] = None
-    try:
-        out = subprocess.check_output(
-            ["nvidia-smi",
-             "--query-gpu=name,memory.used,memory.total",
-             "--format=csv,noheader,nounits"],
-            stderr=subprocess.DEVNULL, timeout=5, text=True
-        ).strip().splitlines()[0]
-        parts = [p.strip() for p in out.split(",")]
-        snap["gpu_name"]          = parts[0]
-        snap["gpu_vram_used_mb"]  = int(parts[1])
-        snap["gpu_vram_total_mb"] = int(parts[2])
-    except Exception:
-        pass  # nvidia-smi absent or failed — silently skip
+    # — GPU + NPU via WMI
+    wmi_data = _wmi_gpu_npu()
+    snap.update(wmi_data)
+
+    # — Lemonade loaded models
+    snap["lemonade_models"] = _lemonade_models()
 
     return snap
 
 
 def format_snapshot(label: str, s: dict) -> str:
     lines = [f"[hw:{label}] ts={s['ts']}"]
-    if s["ram_used_gb"] is not None:
+    if s.get("ram_used_gb") is not None:
         lines.append(f"[hw:{label}] RAM {s['ram_used_gb']} / {s['ram_total_gb']} GB  CPU {s['cpu_pct']}%")
     else:
         lines.append(f"[hw:{label}] RAM unavailable (psutil not installed)")
-    if s["gpu_vram_used_mb"] is not None:
-        lines.append(f"[hw:{label}] GPU '{s['gpu_name']}'  VRAM {s['gpu_vram_used_mb']} / {s['gpu_vram_total_mb']} MB")
+
+    gpu_name = s.get("gpu_name") or "unknown"
+    gpu_util = s.get("gpu_util_pct")
+    gpu_ded  = s.get("gpu_dedicated_mb")
+    if gpu_util is not None:
+        lines.append(f"[hw:{label}] GPU '{gpu_name}'  util={gpu_util}%  dedicated={gpu_ded} MB")
     else:
-        lines.append(f"[hw:{label}] GPU unavailable (nvidia-smi not found)")
+        lines.append(f"[hw:{label}] GPU '{gpu_name}'  util=unavailable (wmi query failed)")
+
+    npu_util = s.get("npu_util_pct")
+    if npu_util is not None:
+        lines.append(f"[hw:{label}] NPU util={npu_util}%")
+    else:
+        lines.append(f"[hw:{label}] NPU util=unavailable")
+
+    models = s.get("lemonade_models") or []
+    lines.append(f"[hw:{label}] Lemonade loaded={models if models else 'none/unreachable'}")
+
     return "\n".join(lines)
 
 
 def format_delta(pre: dict, post: dict, elapsed_s: float, tokens: int) -> str:
     lines = [f"[hw:delta] elapsed={elapsed_s:.2f}s  tokens={tokens}"]
-    if pre["ram_used_gb"] is not None and post["ram_used_gb"] is not None:
-        ram_delta = round(post["ram_used_gb"] - pre["ram_used_gb"], 2)
-        lines.append(f"[hw:delta] RAM delta={ram_delta:+.2f} GB")
-    if pre["gpu_vram_used_mb"] is not None and post["gpu_vram_used_mb"] is not None:
-        vram_delta = post["gpu_vram_used_mb"] - pre["gpu_vram_used_mb"]
-        lines.append(f"[hw:delta] VRAM delta={vram_delta:+d} MB")
+    if pre.get("ram_used_gb") is not None and post.get("ram_used_gb") is not None:
+        lines.append(f"[hw:delta] RAM delta={round(post['ram_used_gb'] - pre['ram_used_gb'], 2):+.2f} GB")
+    if pre.get("gpu_util_pct") is not None and post.get("gpu_util_pct") is not None:
+        lines.append(f"[hw:delta] GPU util {pre['gpu_util_pct']}% -> {post['gpu_util_pct']}%")
+    if pre.get("npu_util_pct") is not None and post.get("npu_util_pct") is not None:
+        lines.append(f"[hw:delta] NPU util {pre['npu_util_pct']}% -> {post['npu_util_pct']}%")
     if tokens and elapsed_s > 0:
-        tps = round(tokens / elapsed_s, 1)
-        lines.append(f"[hw:delta] throughput={tps} tok/s")
+        lines.append(f"[hw:delta] throughput={round(tokens / elapsed_s, 1)} tok/s")
     return "\n".join(lines)
 
 
@@ -177,9 +238,7 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
         tool    = match.group(1).strip()
         path    = match.group(2).strip()
         content = match.group(3)
-
         print(f"[child] tool: {tool}  path: {path}")
-
         if tool == "read_file":
             result = tool_read_file(path)
         elif tool == "write_file":
@@ -188,7 +247,6 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
             result = tool_exec_python(path, timeout=exec_timeout)
         else:
             result = f"ERROR: unknown tool: {tool}"
-
         print(f"[child] result: {result[:120]}")
         results.append((tool, path, result))
     return results
@@ -260,7 +318,7 @@ def main():
     user_prompt = build_user_prompt(ticket, context)
     system_msg  = "Output ONLY raw tool blocks starting at column 0. No markdown. No prose. No indentation."
 
-    # ── hardware snapshot BEFORE model call
+    # ── hardware snapshot BEFORE
     hw_pre = hw_snapshot()
     print(format_snapshot("pre", hw_pre))
 
@@ -278,7 +336,7 @@ def main():
     )
     elapsed = round(time.perf_counter() - t0, 2)
 
-    # ── hardware snapshot AFTER model call
+    # ── hardware snapshot AFTER
     hw_post = hw_snapshot()
     print(format_snapshot("post", hw_post))
 
@@ -295,7 +353,6 @@ def main():
     result_path = ticket.get("result_path", "logs/result.txt")
     os.makedirs(os.path.dirname(result_path) if os.path.dirname(result_path) else ".", exist_ok=True)
 
-    # ── build result log with hardware section
     summary_lines = [
         f"ticket: {ticket_id}",
         f"finish: {why}",
