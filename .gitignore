@@ -23,12 +23,13 @@ logs/*.jsonl
 logs/*-result.txt
 !logs/.gitkeep
 
-# Tickets — work surface is ephemeral
-tickets/open/*.yaml
+# Tickets
+# open/   — tracked: Cline writes and pushes tickets here as durable work items
+# closed/ — tracked: institutional memory, promoted after drain
+# failed/ — NOT tracked: ephemeral failure state, runner-managed
+# in_progress/ — NOT tracked: ephemeral runner lock state
 tickets/in_progress/*.yaml
 tickets/failed/*.yaml
-# closed/ tickets committed intentionally for memory promotion
-# tickets/closed/*.yaml — NOT ignored, closed tickets are institutional memory
 
 # Experiments — runtime dirs only, source files are tracked
 experiments/daemon/logs/
