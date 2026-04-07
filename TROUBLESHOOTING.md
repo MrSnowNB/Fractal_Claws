@@ -1,7 +1,7 @@
 ---
 title: TROUBLESHOOTING Guide
 version: "0.1.0"
-last_updated: "2026-04-05"
+last_updated: "2026-04-06"
 ---
 
 # TROUBLESHOOTING.md — Failure Log
@@ -68,103 +68,30 @@ TS-XXX:
   permanent_fix: <long-term fix>
   prevention: <how to prevent recurrence>
   recurrence: <true/false>
-## TS-20260405-TASK-005
+```
 
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260405-TASK-005
+---
 
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260405-TASK-005
+### TS-20260406-001: Runner 4B Model Empty Choices
 
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260405-TASK-005
+**Context**: Runner attempts to spawn Qwen3.5-4B-GGUF model via Lemonade endpoint.  
+**Symptom**: Model consistently returns `empty choices` across all retry attempts.  
+**Error Snippet**: `[model] attempt N: empty choices — retry in 4s` (4 consecutive failures)  
+**Probable Cause**: Lemonade endpoint returning no response choices or model not loaded properly.  
+**Quick Fix**: Verify Lemonade endpoint `http://localhost:8000/api/v1` is serving Qwen3.5-4B-GGUF model; check Lemonade logs.  
+**Permanent Fix**: Re-load model or restart Lemonade service if endpoint is unresponsive.  
+**Prevention**: Add pre-flight health check to runner.py before attempting model calls.  
+**Recurrence**: false
 
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260405-TASK-005
+---
 
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260406-TASK-005
+### TS-20260406-002: Ticket TASK-014 Decomposition Failure
 
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260406-TASK-005
-
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260406-TASK-005
-
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260406-TASK-005
-
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
-## TS-20260406-TASK-005
-
-- **Context**: Ticket TASK-005 in phase unknown
-- **Symptom**: Test failure
-- **Error Snippet**: `Test failure...`
-- **Probable Cause**: [To be determined]
-- **Quick Fix**: [Not applicable - halt state]
-- **Permanent Fix**: [To be determined after human review]
-- **Prevention**: [To be determined]
-- **Status**: Halted - awaiting human instruction
+**Context**: Ticket TASK-014 failed during goal decomposition phase.  
+**Symptom**: Decomposition produced no tickets — abort.  
+**Error Snippet**: `[runner] decompose failed: model call failed after 4 attempts`  
+**Probable Cause**: Model endpoint `http://localhost:8000/api/v1` returned empty choices.  
+**Quick Fix**: Verify Lemonade service is running and model Qwen3.5-4B-GGUF is loaded.  
+**Permanent Fix**: Restart Lemonade service and reload model configuration.  
+**Prevention**: Implement endpoint health check before decompose phase.  
+**Recurrence**: true (see TS-20260406-001)

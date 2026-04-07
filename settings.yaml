@@ -3,13 +3,13 @@
 # Endpoint: Lemonade at localhost:8000
 
 model:
-  id: Qwen3.5-4B-GGUF
+  id: Qwen3.5-35B-A3B-GGUF
   endpoint: http://localhost:8000/api/v1
   format: openai-compat
   api_key: x
   temperature: 0.2
   max_tokens: 1024             # output token budget (not context window)
-  decompose_budget: 6553       # input token budget for decompose (8192 * 0.8)
+  decompose_budget: 1024       # output token budget for decompose - must not exceed max_tokens
   context_window: 8192
   timeout_seconds: 120         # bumped — decompose prompts need more time
   max_retries: 3

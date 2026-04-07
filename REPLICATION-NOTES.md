@@ -56,6 +56,7 @@ python pre_flight.py
 | 2026-04-06 | Removed fastmcp 3.1.0 |
 | 2026-04-06 | Fixed pre_flight.py merge conflict |
 | 2026-04-06 | All configs locked to ZBook / Lemonade :8000 |
+| 2026-04-06 | Runner 4B model consistently returns empty choices — Lemonade endpoint issue |
 
 ## POC Success Criteria
 

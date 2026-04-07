@@ -472,12 +472,11 @@ def decompose_goal(goal: str, first_n: int) -> list:
          )},
     ]
 
-    # Decompose needs more tokens than a normal task — use 2048 floor
-    # Use context_window for input budget (max_tokens is output limit only)
-    context_window = CFG["model"].get("context_window", 8192)
-    # 4B MoE models need very tight budget for decompose to avoid empty choices
-    # Qwen3-Coder-Next-MXFP4_MOE has issues with larger budgets
-    decompose_budget = min(512, int(context_window * 0.25))  # 25% buffer for MoE models
+    # Use configured decompose_budget if present, otherwise fallback to calculated budget
+    decompose_budget = CFG["model"].get("decompose_budget")
+    if decompose_budget is None:
+        context_window = CFG["model"].get("context_window", 8192)
+        decompose_budget = int(context_window * 0.25)  # 25% buffer
 
     try:
         raw, tokens, finish, elapsed = call_model(messages, budget=decompose_budget)
