@@ -1,7 +1,7 @@
 import pytest
-from src.operator_v7 import Operator
+from src.operator_v7 import Ticket
 
 
 @pytest.fixture
-def operator():
-    return Operator(test_mode=True)
+def Ticket():
+    return Ticket(test_mode=True)
