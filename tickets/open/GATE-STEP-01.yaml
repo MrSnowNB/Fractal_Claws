@@ -1,0 +1,56 @@
+ticket_id: GATE-STEP-01
+title: "Step 1 Validation Gate: test_ticket_io"
+task: >
+  Run the Step 1 validation gate to confirm src/ticket_io.py satisfies
+  the full test contract in tests/test_ticket_io.py.
+
+  Execute: python output/run_gate_step1.py
+
+  The script runs pytest against tests/test_ticket_io.py with --tb=short.
+  All 16 test sections must pass (exit code 0).
+
+  If any test fails:
+    1. Read the failure output carefully.
+    2. Identify whether the bug is in src/ticket_io.py or tests/test_ticket_io.py.
+    3. The spec is AI-FIRST/STEP-01-TICKET-IO.md — it is the source of truth.
+    4. Fix src/ticket_io.py to match the spec (do NOT weaken the tests).
+    5. Re-run until exit code 0.
+
+  On success:
+    - Mark this ticket closed.
+    - Update AI-FIRST/NEXT-STEPS.md: set Step 1 to [x] DONE if not already.
+    - Report the full pytest output as your result.
+
+rationale: >
+  Validates the typed ticket I/O boundary before any downstream code
+  (runner.py wiring, tool registry) depends on it. This gate must be
+  green before Step 2 begins.
+
+produces:
+  - stdout:pytest-step1-results
+
+consumes: []
+tags:
+  - gate
+  - step-1
+  - ticket-io
+  - validation
+
+depends_on: []
+allowed_tools:
+  - exec_python
+  - read_file
+  - write_file
+agent: ""
+status: open
+depth: 0
+max_depth: 1
+decrement: 3
+priority: high
+result_path: logs/GATE-STEP-01-result.txt
+context_files:
+  - AI-FIRST/STEP-01-TICKET-IO.md
+  - src/ticket_io.py
+  - src/operator_v7.py
+  - tests/test_ticket_io.py
+  - output/run_gate_step1.py
