@@ -9,13 +9,19 @@ Active harness models:
   Child (runner):  Qwen3.5-35B-A3B-GGUF   (executor, default probe target)
 
 DEPRECATED: Qwen3.5-4B-GGUF — deferred to future integration phase.
-  Do not reference 4B in active runs. Use 'python pre_flight.py 4b' only
-  if explicitly testing future 4B integration in isolation.
+  Do not reference 4B in active runs.
 
 Usage:
     python pre_flight.py                        # probe A3B (default)
     python pre_flight.py a3b                    # probe A3B explicitly
     python pre_flight.py Qwen3.5-35B-A3B-GGUF  # probe A3B by full ID
+
+Probe sequence:
+    1. /models list — confirms Lemonade is alive and model is in the loaded list
+    2. generation_probe — sends max_tokens:1 to confirm model GENERATES
+       (catches the 'downloaded but not loaded' failure class)
+    3. READY call — confirms full response capability
+    4. Cline settings sync
 """
 
 import sys
@@ -23,6 +29,7 @@ import time
 import json
 import re
 import openai
+import urllib.request
 from pathlib import Path
 
 BASE_URL    = "http://localhost:8000/api/v1"
@@ -34,12 +41,11 @@ RETRY_DELAY = 8
 DEFAULT_MODEL = "Qwen3.5-35B-A3B-GGUF"
 
 KNOWN_MODELS = {
-    "a3b":  "Qwen3.5-35B-A3B-GGUF",
-    "35b":  "Qwen3.5-35B-A3B-GGUF",
-    "next": "Qwen3-Coder-Next-GGUF",
+    "a3b":   "Qwen3.5-35B-A3B-GGUF",
+    "35b":   "Qwen3.5-35B-A3B-GGUF",
+    "next":  "Qwen3-Coder-Next-GGUF",
     "coder": "Qwen3-Coder-Next-GGUF",
     # 4B: DEPRECATED — deferred to future integration phase
-    # Uncomment only for isolated future 4B testing:
     # "4b":  "Qwen3.5-4B-GGUF",
 }
 
@@ -81,10 +87,55 @@ def resolve_model(arg: str) -> str:
     key = arg.lower()
     if key == "4b":
         print("[pre_flight] WARNING: 4B model is DEPRECATED and deferred to future integration.")
-        print("[pre_flight] To test 4B in isolation, uncomment its entry in KNOWN_MODELS.")
         print("[pre_flight] Aborting — use 'python pre_flight.py' to probe the active A3B model.")
         sys.exit(1)
     return KNOWN_MODELS.get(key, arg)
+
+
+def check_model_listed(model: str) -> bool:
+    """Step 1: confirm model appears in /models loaded list."""
+    try:
+        req  = urllib.request.urlopen(f"{BASE_URL}/models", timeout=5)
+        data = json.loads(req.read())
+        loaded = [m["id"] for m in data.get("data", [])]
+        if model in loaded:
+            print(f"[pre_flight] /models OK — '{model}' is in loaded list")
+            return True
+        else:
+            print(f"[pre_flight] /models: '{model}' NOT in loaded list.")
+            print(f"[pre_flight] Loaded: {loaded}")
+            print(f"[pre_flight] → Open Lemonade UI and load '{model}' before continuing.")
+            return False
+    except Exception as e:
+        print(f"[pre_flight] /models call failed: {e}")
+        return False
+
+
+def generation_probe(client: openai.OpenAI, model: str) -> bool:
+    """Step 2: send max_tokens:1 to confirm model GENERATES (not just lists).
+    This surfaces the 'downloaded but not loaded in slot' failure class.
+    A model that lists but doesn't generate returns empty choices here.
+    """
+    print(f"[pre_flight] generation probe (max_tokens=1)...")
+    try:
+        r = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=1,
+            temperature=0,
+            timeout=30,
+        )
+        if r.choices and (r.choices[0].message.content or "").strip():
+            print(f"[pre_flight] generation probe OK — model is generating")
+            return True
+        else:
+            print(f"[pre_flight] generation probe FAILED — empty choices or empty content")
+            print(f"[pre_flight] Model may be downloaded but not loaded into active slot.")
+            print(f"[pre_flight] → In Lemonade UI: unload and reload '{model}'.")
+            return False
+    except Exception as e:
+        print(f"[pre_flight] generation probe error: {e}")
+        return False
 
 
 def check(model: str) -> None:
@@ -94,6 +145,15 @@ def check(model: str) -> None:
     print(f"[pre_flight] Model:     {model}")
     print(f"[pre_flight] Max wait:  {MAX_RETRIES * RETRY_DELAY}s\n")
 
+    # Step 1 — model must appear in /models list
+    if not check_model_listed(model):
+        sys.exit(1)
+
+    # Step 2 — generation probe (catches downloaded-but-not-loaded)
+    if not generation_probe(client, model):
+        sys.exit(1)
+
+    # Step 3 — full READY check with retries
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             r = client.chat.completions.create(
@@ -103,20 +163,20 @@ def check(model: str) -> None:
                 temperature=0,
             )
             reply = r.choices[0].message.content.strip()
-            print(f"[pre_flight] READY - model responded: '{reply}'")
+            print(f"[pre_flight] READY — model responded: '{reply}'")
             update_cline_settings(model)
             print(f"[pre_flight] Safe to use Cline / harness now.")
             sys.exit(0)
         except openai.NotFoundError:
-            print(f"[{attempt}/{MAX_RETRIES}] 404 - model not ready, waiting {RETRY_DELAY}s...")
+            print(f"[{attempt}/{MAX_RETRIES}] 404 — model not ready, waiting {RETRY_DELAY}s...")
         except openai.APIConnectionError as e:
-            print(f"[{attempt}/{MAX_RETRIES}] Connection error - is Lemonade running on :8000? ({e})")
+            print(f"[{attempt}/{MAX_RETRIES}] Connection error — is Lemonade running on :8000? ({e})")
         except Exception as e:
             print(f"[{attempt}/{MAX_RETRIES}] Unexpected error: {e}")
         time.sleep(RETRY_DELAY)
 
-    print(f"\n[pre_flight] FAILED - '{model}' never ready after {MAX_RETRIES * RETRY_DELAY}s.")
-    print("[pre_flight] Check Lemonade UI - is the model loaded?")
+    print(f"\n[pre_flight] FAILED — '{model}' never ready after {MAX_RETRIES * RETRY_DELAY}s.")
+    print("[pre_flight] Check Lemonade UI — is the model loaded and generating?")
     sys.exit(1)
 
 

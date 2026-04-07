@@ -6,6 +6,12 @@
 #
 # 4B MODEL STATUS: DEPRECATED — deferred to future integration phase.
 # Do NOT reference Qwen3.5-4B-GGUF anywhere in active code or docs.
+#
+# Budget policy:
+#   max_tokens        = output token CAP (server-enforced hard limit)
+#   decompose_budget  = output tokens allocated to decompose phase
+#   output_budget_pct = fraction of context_window used as BUDGET_CEILING in runner
+#   All three must be consistent: decompose_budget <= context_window * output_budget_pct
 
 model:
   id: Qwen3.5-35B-A3B-GGUF        # child executor (A3B MoE, ctx_size: 64000)
@@ -13,8 +19,9 @@ model:
   format: openai-compat
   api_key: x
   temperature: 0.2
-  max_tokens: 2048                 # output token budget (not context window)
-  decompose_budget: 2048           # output tokens for decompose phase
+  max_tokens: 512                  # output token hard CAP (server enforces this)
+  decompose_budget: 51200          # 80% of 64000 — output tokens for decompose
+  output_budget_pct: 0.8           # 80% of context_window = BUDGET_CEILING in runner
   context_window: 64000            # A3B actual context window
   timeout_seconds: 180
   max_retries: 3

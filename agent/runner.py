@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-runner.py — Fractal Claws agent skeleton v2
+runner.py — Fractal Claws agent skeleton v3
 
 Single entry point. Reads all config from settings.yaml.
 No model names, no depths, no tiers hardcoded here.
@@ -10,14 +10,12 @@ Usage:
     python agent/runner.py --goal "<goal>"        # decompose goal then drain
     python agent/runner.py --once                 # dispatch one ticket then exit
 
-Skeleton guarantees:
-    1. Goal enters  →  decomposed into YAML tickets in tickets/open/
-    2. Dispatch loop drains until no open, unblocked tickets remain
-       (handles deferred tickets correctly — re-queues until deps close)
-    3. Each closed ticket's result is forwarded as context to dependents
-    4. Token budget per ticket is derived from task complexity, not a flat cap
-    5. Hardware snapshot on every model call
-    6. All config from settings.yaml — zero hardcoded values
+Budget policy (v3):
+    BUDGET_CEILING = context_window * 0.8   (80% of ctx — matches AGENT-POLICY.md)
+    BUDGET_FLOOR   = 256                    (minimum output tokens)
+    max_tokens in settings.yaml = output token CAP (separate from input budget)
+    decompose_budget in settings.yaml = output tokens for decompose phase
+    Both fall back to 80% of context_window if not set.
 """
 
 import os
@@ -62,18 +60,30 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
 
 # ── token budget ──────────────────────────────────────────────────────────────
+# Single unified policy: 80% of context window.
+# BUDGET_CEILING is the max output tokens we will ever request.
+# BUDGET_FLOOR is the minimum — prevents degenerate tiny budgets on short tasks.
+# max_tokens in settings.yaml is the HARD OUTPUT CAP (what the server enforces).
+# decompose_budget in settings.yaml is the output token ask for decompose phase.
+# Both fall back to 80% of context_window if not explicitly set.
 
-BUDGET_FLOOR   = 1024   # 4B model needs more output budget to generate code
-BUDGET_CEILING = int(CFG["model"].get("context_window", 8192) * 0.4)  # 40% of ctx
+CONTEXT_WINDOW  = int(CFG["model"].get("context_window", 8192))
+BUDGET_PCT      = float(CFG["model"].get("output_budget_pct", 0.8))
+BUDGET_CEILING  = int(CONTEXT_WINDOW * BUDGET_PCT)   # 80% of ctx by default
+BUDGET_FLOOR    = 256                                  # minimum useful output
 
 WORDS_PER_TOKEN = 0.75
-OUTPUT_RATIO    = 8.0   # output tokens ≈ 8× input words for code tasks (4B needs more headroom)
 
 def token_budget(ticket: dict) -> int:
-    task_words  = len(str(ticket.get("task", "")).split())
-    estimate    = int(task_words / WORDS_PER_TOKEN * OUTPUT_RATIO)
-    budget      = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
-    max_tok     = ticket.get("max_tokens")
+    """Return the output token budget for a single ticket.
+    Scales with task complexity but is bounded by BUDGET_FLOOR / BUDGET_CEILING.
+    If the ticket overrides max_tokens directly, that value wins.
+    """
+    task_words = len(str(ticket.get("task", "")).split())
+    # estimate: task complexity * 4 (reasonable for code generation)
+    estimate   = int(task_words / WORDS_PER_TOKEN * 4)
+    budget     = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
+    max_tok    = ticket.get("max_tokens")
     return int(max_tok) if max_tok is not None else budget
 
 
@@ -473,11 +483,10 @@ def decompose_goal(goal: str, first_n: int) -> list:
          )},
     ]
 
-    # Use configured decompose_budget if present, otherwise fallback to calculated budget
+    # Use configured decompose_budget if present; fallback to 80% of context_window
     decompose_budget = CFG["model"].get("decompose_budget")
     if decompose_budget is None:
-        context_window = CFG["model"].get("context_window", 8192)
-        decompose_budget = int(context_window * 0.25)  # 25% buffer
+        decompose_budget = BUDGET_CEILING  # 80% of ctx
 
     try:
         raw, tokens, finish, elapsed = call_model(messages, budget=decompose_budget)
