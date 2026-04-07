@@ -1,6 +1,6 @@
 ---
 title: CLAUDE.md — Fractal Claws POC
-version: "3.0"
+version: "3.1"
 scope: single-parent / single-child ticket harness
 ---
 
@@ -56,11 +56,22 @@ Do not hardcode model names in code or docs.
 ## Parent Role (Cline)
 
 1. Read task from human
-2. Write a ticket YAML to `tickets/open/` using `tickets/template.yaml` as schema
-3. Run: `python agent/runner.py --once` (single ticket) or `--goal "<goal>"` (decompose + drain)
-4. Poll `tickets/closed/` or `logs/` for result file
-5. Read result, continue work or write next ticket
-6. Run validation gates before declaring done
+2. Write ticket YAML files to `tickets/open/` using `tickets/template.yaml` as schema
+3. **After writing all tickets, immediately run:**
+   ```powershell
+   git add tickets/open/
+   git commit -m "tickets: decompose <goal>"
+   git push
+   ```
+   This is **mandatory** — tickets that are not pushed do not exist for the runner.
+4. Run: `python agent/runner.py --once` (single ticket) or drain all with no flag
+5. Poll `tickets/closed/` or `logs/` for result file
+6. Read result, continue work or write next ticket
+7. Run validation gates before declaring done
+
+**Ticket numbering:** Always check `tickets/open/`, `tickets/closed/`, and `tickets/failed/`
+for the highest existing TASK-NNN before assigning new IDs. Never reuse an ID.
+Start new tickets from `max(existing) + 1`.
 
 **Forbidden tools for parent:**
 - `browser`, `web_fetch`, `computer_use`, `code_interpreter`
@@ -85,7 +96,7 @@ Do not hardcode model names in code or docs.
 ## Ticket Lifecycle
 
 ```
-tickets/open/        <- parent writes here
+tickets/open/        <- parent writes here, then git pushes
 tickets/in_progress/ <- runner moves ticket here on pickup
 tickets/closed/      <- runner closes ticket here on pass
 tickets/failed/      <- runner moves ticket here on max depth
@@ -137,3 +148,4 @@ If any check fails — fix it before accepting any task.
 4. Never write to `tickets/closed/` directly — runner does that.
 5. Context at 80%: write `CHECKPOINT.md`, halt, alert human.
 6. **Do not attempt to load, test, or reference Qwen3.5-4B-GGUF** — it is deprecated for this phase.
+7. **Always `git push` after writing tickets.** Tickets not in the remote repo do not exist.
