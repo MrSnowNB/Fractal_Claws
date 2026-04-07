@@ -39,7 +39,7 @@ One model only. No 35B, no Hermes, no LFM2.5, no swarm.
 - Do NOT pip install anything
 - Do NOT register or start MCP servers
 - Do NOT modify Cline config or VSCode settings
-- Do NOT use browser, web_fetch, or computer_use
+- Do  use browser, web_fetch, or computer_use
 - Do NOT spawn more than one child per ticket
 - Do NOT write to tickets/closed/ directly
 
