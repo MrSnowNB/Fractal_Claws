@@ -30,6 +30,12 @@ tickets/failed/*.yaml
 # closed/ tickets committed intentionally for memory promotion
 # tickets/closed/*.yaml — NOT ignored, closed tickets are institutional memory
 
+# Experiments — runtime dirs only, source files are tracked
+experiments/daemon/logs/
+experiments/daemon/inbox/
+experiments/daemon/outbox/
+*.pid
+
 # Environment
 .env
 *.env
