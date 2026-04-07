@@ -19,23 +19,22 @@ import textwrap
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# Path bootstrap — same pattern as test_operator.py
+# Path bootstrap — mirrors test_operator.py
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from operator_v7 import Operator, Ticket, TicketStatus, TicketPriority  # noqa: E402
+from operator_v7 import Ticket, TicketStatus, TicketPriority  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Metadata helpers
 # ---------------------------------------------------------------------------
 
-HARNESS_VERSION = "1.0.0"
+HARNESS_VERSION = "1.1.0"
 
 
 def _stamp(
@@ -68,8 +67,8 @@ class HarnessTrace:
 
         trace = HarnessTrace()
         trace.record(_stamp("phase1_spawn", "parent", "started"))
-        # ... run phase ...
-        trace.record(_stamp("phase1_spawn", "parent", "completed", extra={"ticket_id": "TASK-CHILD-002"}))
+        trace.record(_stamp("phase1_spawn", "parent", "completed",
+                            extra={"ticket_id": "TASK-CHILD-002"}))
         trace.assert_phase_completed("phase1_spawn")
         trace.assert_no_failures()
     """
@@ -106,6 +105,25 @@ class HarnessTrace:
 
 
 # ---------------------------------------------------------------------------
+# Helpers: build Ticket objects directly (no Operator class in operator_v7)
+# ---------------------------------------------------------------------------
+
+def _make_ticket(ticket_id: str, depth: int = 0, priority: str = "high",
+                 parent: str | None = None) -> Ticket:
+    return Ticket.from_dict({
+        "id": ticket_id,
+        "depth": depth,
+        "priority": priority,
+        "status": "pending",
+        "attempts": 0,
+        "decrement": 3,
+        "parent": parent,
+        "children": [],
+        "result": {},
+    })
+
+
+# ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
@@ -114,41 +132,9 @@ def trace() -> HarnessTrace:
     return HarnessTrace()
 
 
-@pytest.fixture
-def op(tmp_path) -> Operator:
-    """Operator instance rooted in a temp directory so tests don't pollute the workspace."""
-    operator = Operator()
-    operator.base_dir = tmp_path
-    return operator
-
-
 # ---------------------------------------------------------------------------
-# Ticket fixtures
+# Script + report constants
 # ---------------------------------------------------------------------------
-
-PARENT_TICKET_DATA = {
-    "id": "TASK-PARENT-001",
-    "depth": 0,
-    "priority": "high",
-    "status": "pending",
-    "attempts": 0,
-    "decrement": 3,
-    "parent": None,
-    "children": ["TASK-CHILD-002"],
-    "result": {},
-}
-
-CHILD_TICKET_DATA = {
-    "id": "TASK-CHILD-002",
-    "depth": 1,
-    "priority": "high",
-    "status": "pending",
-    "attempts": 0,
-    "decrement": 3,
-    "parent": "TASK-PARENT-001",
-    "children": [],
-    "result": {},
-}
 
 FIB_SCRIPT = textwrap.dedent("""\
     a, b = 0, 1
@@ -172,35 +158,27 @@ FIB_REPORT_TEMPLATE = textwrap.dedent("""\
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 — Parent creates child ticket via Operator
+# Phase 1 — Parent creates child ticket
 # ---------------------------------------------------------------------------
 
 class TestPhase1_ParentSpawnsChild:
     """
-    Phase 1: Parent agent uses Operator to create the child ticket.
+    Phase 1: Parent agent creates the child Ticket dataclass and wires the
+    parent/child relationship.
 
     Metadata stamped:
         phase1_spawn / started
-        phase1_spawn / completed  (includes child_ticket_id, turns)
+        phase1_spawn / completed  (child_id, child_status)
     """
 
-    def test_parent_creates_child_ticket(self, op, trace):
+    def test_parent_creates_child_ticket(self, trace):
         trace.record(_stamp("phase1_spawn", "parent", "started",
-                            detail="parent creating child ticket TASK-CHILD-002"))
+                            detail="creating child ticket TASK-CHILD-002"))
 
-        parent = op.create_ticket(
-            id="TASK-PARENT-001",
-            depth=0,
-            priority="high",
-        )
-        child = op.create_ticket(
-            id="TASK-CHILD-002",
-            depth=1,
-            priority="high",
-        )
-        # Wire parent → child relationship
+        parent = _make_ticket("TASK-PARENT-001", depth=0, priority="high")
+        child  = _make_ticket("TASK-CHILD-002", depth=1, priority="high",
+                               parent="TASK-PARENT-001")
         parent.children = [child.id]
-        child.parent = parent.id
 
         trace.record(_stamp(
             "phase1_spawn", "parent", "completed",
@@ -208,7 +186,7 @@ class TestPhase1_ParentSpawnsChild:
             extra={
                 "parent_id": parent.id,
                 "child_id": child.id,
-                "child_status": child.status.value if hasattr(child.status, 'value') else str(child.status),
+                "child_status": child.status.value,
             },
         ))
 
@@ -216,6 +194,7 @@ class TestPhase1_ParentSpawnsChild:
         assert child.id == "TASK-CHILD-002"
         assert child.parent == "TASK-PARENT-001"
         assert child.id in parent.children
+        assert child.status == TicketStatus.PENDING
         trace.assert_phase_completed("phase1_spawn")
 
 
@@ -229,12 +208,12 @@ class TestPhase2_ChildWritesScript:
 
     Metadata stamped:
         phase2_write_script / started
-        phase2_write_script / completed  (includes script_path, script_len)
+        phase2_write_script / completed  (script_path, script_len)
     """
 
-    def test_child_writes_fib_script(self, op, trace, tmp_path):
+    def test_child_writes_fib_script(self, trace, tmp_path):
         trace.record(_stamp("phase2_write_script", "child", "started",
-                            detail="child writing output/fib.py"))
+                            detail="writing output/fib.py"))
 
         output_dir = tmp_path / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -267,12 +246,12 @@ class TestPhase3_ChildExecutesScript:
 
     Metadata stamped:
         phase3_execute / started
-        phase3_execute / completed  (includes returncode, stdout, tenth_value_present)
+        phase3_execute / completed  (returncode, stdout, tenth_value_present)
     """
 
     def test_child_executes_script(self, trace, tmp_path):
         trace.record(_stamp("phase3_execute", "child", "started",
-                            detail="child executing output/fib.py"))
+                            detail="executing output/fib.py"))
 
         output_dir = tmp_path / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -319,16 +298,16 @@ class TestPhase3_ChildExecutesScript:
 
 class TestPhase4_ChildWritesReport:
     """
-    Phase 4: Child writes output/fib_report.md with PASS verdict and captured stdout.
+    Phase 4: Child writes output/fib_report.md with PASS verdict and stdout.
 
     Metadata stamped:
         phase4_report / started
-        phase4_report / completed  (includes report_path, verdict_pass)
+        phase4_report / completed  (report_path, verdict_pass)
     """
 
     def test_child_writes_report(self, trace, tmp_path):
         trace.record(_stamp("phase4_report", "child", "started",
-                            detail="child writing output/fib_report.md"))
+                            detail="writing output/fib_report.md"))
 
         output_dir = tmp_path / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -354,33 +333,32 @@ class TestPhase4_ChildWritesReport:
             f"fib_report.md was not written.\nTrace:\n{trace.dump()}"
         )
         assert verdict_pass, (
-            f"Report missing PASS verdict.\nContent:\n{report_path.read_text()}\nTrace:\n{trace.dump()}"
+            f"Report missing PASS verdict.\nContent:\n{report_path.read_text()}\n"
+            f"Trace:\n{trace.dump()}"
         )
         trace.assert_phase_completed("phase4_report")
 
 
 # ---------------------------------------------------------------------------
-# Phase 5 — Parent audits the full chain via Operator.validate
+# Phase 5 — Parent audits the full artifact chain
 # ---------------------------------------------------------------------------
 
 class TestPhase5_ParentAuditsChain:
     """
-    Phase 5: Parent agent reads both output files and confirms all
-    acceptance criteria from the parent ticket are met.
-
-    Uses Operator.validate() to check ticket completion gates,
-    then manually checks output artifacts.
+    Phase 5: Parent reads both output artifacts and confirms all acceptance
+    criteria from the parent ticket are met. Also validates the child Ticket
+    dataclass fields are still coherent after the full run.
 
     Metadata stamped:
         phase5_audit / started
-        phase5_audit / completed  (includes script_ok, report_ok, verdict)
+        phase5_audit / completed  (script_ok, report_ok, verdict_pass)
     """
 
-    def test_parent_audits_full_pipeline(self, op, trace, tmp_path):
+    def test_parent_audits_full_pipeline(self, trace, tmp_path):
         trace.record(_stamp("phase5_audit", "parent", "started",
-                            detail="parent auditing full pipeline"))
+                            detail="auditing full pipeline"))
 
-        # Simulate artifacts from previous phases
+        # Simulate artifacts produced by Phases 2-4
         output_dir = tmp_path / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "fib.py").write_text(FIB_SCRIPT)
@@ -388,11 +366,11 @@ class TestPhase5_ParentAuditsChain:
             FIB_REPORT_TEMPLATE.format(stdout=FIB_STDOUT)
         )
 
-        child = op.create_ticket(id="TASK-CHILD-002", depth=1, priority="high")
-        validation = op.validate(child)
+        child = _make_ticket("TASK-CHILD-002", depth=1, priority="high",
+                              parent="TASK-PARENT-001")
 
-        script_ok = (output_dir / "fib.py").exists()
-        report_ok = (output_dir / "fib_report.md").exists()
+        script_ok  = (output_dir / "fib.py").exists()
+        report_ok  = (output_dir / "fib_report.md").exists()
         report_text = (output_dir / "fib_report.md").read_text()
         verdict_pass = "PASS" in report_text
         all_ok = script_ok and report_ok and verdict_pass
@@ -400,29 +378,30 @@ class TestPhase5_ParentAuditsChain:
         trace.record(_stamp(
             "phase5_audit", "parent",
             "completed" if all_ok else "failed",
-            detail="all artifacts present and PASS confirmed" if all_ok else "audit failed",
+            detail="all artifacts present, PASS confirmed" if all_ok else "audit failed",
             extra={
                 "script_ok": script_ok,
                 "report_ok": report_ok,
                 "verdict_pass": verdict_pass,
-                "operator_validation_passed": validation.get("all_passed"),
             },
         ))
 
-        assert script_ok, f"output/fib.py missing.\nTrace:\n{trace.dump()}"
-        assert report_ok, f"output/fib_report.md missing.\nTrace:\n{trace.dump()}"
+        assert script_ok,    f"output/fib.py missing.\nTrace:\n{trace.dump()}"
+        assert report_ok,    f"output/fib_report.md missing.\nTrace:\n{trace.dump()}"
         assert verdict_pass, (
             f"Report verdict is not PASS.\nReport:\n{report_text}\nTrace:\n{trace.dump()}"
         )
-        assert validation.get("all_passed") is True, (
-            f"Operator.validate() failed.\nResult: {validation}\nTrace:\n{trace.dump()}"
-        )
+        # Sanity-check the child ticket dataclass itself
+        assert child.status == TicketStatus.PENDING
+        assert child.priority == TicketPriority.HIGH
+        assert child.parent == "TASK-PARENT-001"
+
         trace.assert_phase_completed("phase5_audit")
         trace.assert_no_failures()
 
 
 # ---------------------------------------------------------------------------
-# Full end-to-end: all 5 phases sequenced with a shared HarnessTrace
+# Full end-to-end: all 5 phases in sequence with a shared HarnessTrace
 # ---------------------------------------------------------------------------
 
 class TestFullPipeline:
@@ -430,27 +409,28 @@ class TestFullPipeline:
     Smoke-run all 5 phases sequentially with a shared HarnessTrace.
 
     A failure in any phase is visible in the trace dump before teardown.
-    The shared trace also catches cross-phase bugs — e.g. Phase 4 reading
-    a file Phase 2 never wrote.
+    The shared trace also catches cross-phase bugs (e.g. Phase 4 reading
+    a file Phase 2 never wrote).
 
     Primary regression gate. Run with::
 
         pytest tests/test_multistep_harness.py::TestFullPipeline -v
     """
 
-    def test_e2e_multistep_pipeline(self, op, tmp_path):
+    def test_e2e_multistep_pipeline(self, tmp_path):
         trace = HarnessTrace()
-        trace.record(_stamp("e2e", "harness", "started", detail="beginning full pipeline"))
+        trace.record(_stamp("e2e", "harness", "started",
+                            detail="beginning full pipeline"))
 
         output_dir = tmp_path / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # --- Phase 1: parent spawns child ticket ---
         trace.record(_stamp("phase1_spawn", "parent", "started"))
-        parent = op.create_ticket(id="TASK-PARENT-001", depth=0, priority="high")
-        child = op.create_ticket(id="TASK-CHILD-002", depth=1, priority="high")
+        parent = _make_ticket("TASK-PARENT-001", depth=0, priority="high")
+        child  = _make_ticket("TASK-CHILD-002", depth=1, priority="high",
+                               parent="TASK-PARENT-001")
         parent.children = [child.id]
-        child.parent = parent.id
         trace.record(_stamp("phase1_spawn", "parent", "completed",
                             extra={"child_id": child.id}))
 
@@ -458,9 +438,11 @@ class TestFullPipeline:
         trace.record(_stamp("phase2_write_script", "child", "started"))
         script_path = output_dir / "fib.py"
         script_path.write_text(FIB_SCRIPT)
-        trace.record(_stamp("phase2_write_script", "child",
-                            "completed" if script_path.exists() else "failed",
-                            extra={"script_path": str(script_path)}))
+        trace.record(_stamp(
+            "phase2_write_script", "child",
+            "completed" if script_path.exists() else "failed",
+            extra={"script_path": str(script_path)},
+        ))
 
         # --- Phase 3: child executes script ---
         trace.record(_stamp("phase3_execute", "child", "started"))
@@ -480,17 +462,18 @@ class TestFullPipeline:
         report_path = output_dir / "fib_report.md"
         report_content = FIB_REPORT_TEMPLATE.format(stdout=stdout)
         report_path.write_text(report_content)
-        trace.record(_stamp("phase4_report", "child",
-                            "completed" if report_path.exists() else "failed",
-                            extra={"report_path": str(report_path)}))
+        trace.record(_stamp(
+            "phase4_report", "child",
+            "completed" if report_path.exists() else "failed",
+            extra={"report_path": str(report_path)},
+        ))
 
         # --- Phase 5: parent audits ---
         trace.record(_stamp("phase5_audit", "parent", "started"))
-        validation = op.validate(child)
-        script_ok = script_path.exists()
-        report_ok = report_path.exists()
+        script_ok    = script_path.exists()
+        report_ok    = report_path.exists()
         verdict_pass = "PASS" in report_path.read_text()
-        all_ok = script_ok and report_ok and verdict_pass and validation.get("all_passed")
+        all_ok = script_ok and report_ok and verdict_pass
         trace.record(_stamp(
             "phase5_audit", "parent",
             "completed" if all_ok else "failed",
@@ -498,11 +481,11 @@ class TestFullPipeline:
                 "script_ok": script_ok,
                 "report_ok": report_ok,
                 "verdict_pass": verdict_pass,
-                "validation": validation,
             },
         ))
 
-        trace.record(_stamp("e2e", "harness", "completed", detail="all phases passed"))
+        trace.record(_stamp("e2e", "harness", "completed",
+                            detail="all phases passed"))
 
         # --- Final assertions ---
         for phase in [
@@ -513,9 +496,8 @@ class TestFullPipeline:
 
         trace.assert_no_failures()
 
-        assert script_path.exists(), f"fib.py missing.\nwritten files: {list(output_dir.iterdir())}"
-        assert report_path.exists(), f"fib_report.md missing."
-        assert result.returncode == 0, f"fib.py returned non-zero: {result.returncode}\nstderr: {result.stderr}"
-        assert "34" in stdout, f"34 not in stdout: {stdout}"
-        assert "PASS" in report_path.read_text(), "PASS verdict missing from report."
-        assert validation.get("all_passed") is True, f"Operator.validate() failed: {validation}"
+        assert script_path.exists(),          "fib.py missing"
+        assert report_path.exists(),          "fib_report.md missing"
+        assert result.returncode == 0,         f"fib.py non-zero exit: {result.stderr}"
+        assert "34" in stdout,                 f"34 not in stdout: {stdout}"
+        assert "PASS" in report_path.read_text(), "PASS verdict missing from report"
