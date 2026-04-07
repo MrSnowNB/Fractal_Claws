@@ -73,7 +73,8 @@ def token_budget(ticket: dict) -> int:
     task_words  = len(str(ticket.get("task", "")).split())
     estimate    = int(task_words / WORDS_PER_TOKEN * OUTPUT_RATIO)
     budget      = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
-    return int(ticket.get("max_tokens", budget))
+    max_tok     = ticket.get("max_tokens")
+    return int(max_tok) if max_tok is not None else budget
 
 
 # ── hardware snapshot ─────────────────────────────────────────────────────────
