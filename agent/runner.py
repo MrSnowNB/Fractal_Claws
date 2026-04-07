@@ -456,7 +456,8 @@ def execute_ticket(ticket_path: str) -> bool:
         ticket["attempts_log"] = f"{LOG_DIR}/{ticket_id}-attempts.jsonl"
         dest = os.path.join(CLOSED_DIR, os.path.basename(ticket_path))
         save_ticket(dest, ticket)
-        os.remove(ticket_path)
+        if os.path.exists(ticket_path):
+            os.remove(ticket_path)
         print(f"  [runner] PASS → closed/{os.path.basename(ticket_path)}")
         return True
     else:

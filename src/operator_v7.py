@@ -84,7 +84,7 @@ class Ticket:
     def to_dict(self) -> Dict[str, Any]:
         """Convert ticket to dictionary."""
         return {
-            "id": self.id,
+            "ticket_id": self.id,
             "depth": self.depth,
             "parent": self.parent,
             "children": self.children,
@@ -100,7 +100,7 @@ class Ticket:
     def from_dict(cls, data: Dict[str, Any]) -> "Ticket":
         """Create ticket from dictionary."""
         return cls(
-            id=data["id"],
+            id=data["ticket_id"],
             depth=data.get("depth", 0),
             parent=data.get("parent"),
             children=data.get("children", []),
