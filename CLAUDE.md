@@ -149,3 +149,14 @@ If any check fails — fix it before accepting any task.
 5. Context at 80%: write `CHECKPOINT.md`, halt, alert human.
 6. **Do not attempt to load, test, or reference Qwen3.5-4B-GGUF** — it is deprecated for this phase.
 7. **Always `git push` after writing tickets.** Tickets not in the remote repo do not exist.
+
+## Multistep Harness Tests
+
+Run the primary regression gate before any push:
+
+    pytest tests/test_multistep_harness.py -v
+    pytest tests/test_multistep_harness.py::TestFullPipeline -v
+    pytest tests/test_multistep_harness.py -v -k TestPhase3
+
+On failure, read the HarnessTrace JSON in the assertion message.
+status=started with no completed = tool call never fired.
