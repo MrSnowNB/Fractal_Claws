@@ -160,3 +160,13 @@ Run the primary regression gate before any push:
 
 On failure, read the HarnessTrace JSON in the assertion message.
 status=started with no completed = tool call never fired.
+## Multistep Harness Tests
+
+Run the primary regression gate before any push:
+
+    pytest tests/test_multistep_harness.py -v
+    pytest tests/test_multistep_harness.py::TestFullPipeline -v
+    pytest tests/test_multistep_harness.py -v -k TestPhase3
+
+On failure, read the HarnessTrace JSON in the assertion message.
+status=started with no completed = tool call never fired.
