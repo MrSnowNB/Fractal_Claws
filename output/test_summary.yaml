@@ -1,0 +1,57 @@
+---
+title: Test Harness Execution Summary
+version: "1.0.0"
+last_updated: "2026-04-06"
+---
+test_summary:
+  total_tests: 16
+  passed: 16
+  failed: 0
+  status: "ALL TESTS PASSED"
+  duration_seconds: 0.05
+
+test_suites:
+  - name: test_first_principles_solver.py
+    tests:
+      - name: test_solver_init
+        status: PASS
+      - name: test_component_creation
+        status: PASS
+      - name: test_component_from_dict
+        status: PASS
+      - name: test_first_principles_breakdown
+        status: PASS
+      - name: test_recursive_decomposition
+        status: PASS
+      - name: test_get_stats
+        status: PASS
+
+  - name: test_operator.py
+    tests:
+      - name: test_operator_init
+        status: PASS
+      - name: test_ticket_creation
+        status: PASS
+      - name: test_ticket_from_dict
+        status: PASS
+      - name: test_ticket_to_dict
+        status: PASS
+      - name: test_first_principles_breakdown
+        status: PASS
+      - name: test_recursive_decomposition
+        status: PASS
+      - name: test_validate_method
+        status: PASS
+      - name: test_handle_failure_raises_exit
+        status: PASS
+      - name: test_capture_logs_creates_file
+        status: PASS
+      - name: test_get_stats
+        status: PASS
+
+environment:
+  platform: win32
+  python_version: "3.10.11"
+  pytest_version: "7.4.3"
+  pluggy_version: "1.6.0"
+  root_directory: "C:\\Users\\AMD\\Documents\\Fractal_Claws"

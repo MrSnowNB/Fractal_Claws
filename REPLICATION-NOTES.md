@@ -64,3 +64,5 @@ python pre_flight.py
 - [ ] Child reads context, writes result, closes ticket
 - [ ] pytest -q tests/ passes
 - [ ] ruff check src/ clean
+| TS-20260406-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-06 20:22:19 |
+| TS-20260406-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-06 20:24:08 |
