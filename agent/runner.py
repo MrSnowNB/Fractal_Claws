@@ -306,10 +306,6 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
 # ── prompt ────────────────────────────────────────────────────────────────────
 
 TOOL_SYNTAX = """\
-You are a tool-calling agent. Output ONLY raw tool blocks — no prose, no markdown.
-
-Available tools:
-
 TOOL: read_file
 PATH: <path>
 END
@@ -327,13 +323,6 @@ END
 TOOL: exec_python
 PATH: <path>
 END
-
-Rules:
-1. First line of response must be TOOL:
-2. No indentation on TOOL/PATH/END lines.
-3. exec_python paths must be inside output/
-4. write_file before exec_python on the same path.
-5. After last tool block write: DONE
 """
 
 
@@ -450,25 +439,19 @@ def _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
 # ── decompose ─────────────────────────────────────────────────────────────────
 
 DECOMPOSE_SYSTEM = """\
-You are a task decomposer for an autonomous agent system.
-Given a plain-English goal, output a YAML list of atomic tickets.
+You are a task decomposer. Output YAML tickets.
 
 Rules:
-- Each ticket: completable in 1-2 tool calls.
-- Available tools: write_file, exec_python, read_file, list_dir.
-- exec_python paths must be inside output/
-- write_file MUST appear before exec_python on the same path.
-- Use depends_on to express sequential dependencies.
-- Output ONLY valid YAML. No prose, no markdown fences.
+- Each ticket: 1-2 tool calls. Tools: write_file, exec_python, read_file, list_dir.
+- exec_python paths inside output/. write_file before exec_python on same path.
+- Use depends_on for dependencies. Output ONLY valid YAML list.
 
-Output format (one or more):
-- ticket_id: TASK-NNN
-  title: <short title>
-  task: >-
-    <one sentence: what to do, what file, what to run>
+Output format example:
+- ticket_id: TASK-001
+  title: "Generate Fibonacci"
+  task: "Write script to generate first 20 fib numbers"
   depends_on: []
-  allowed_tools:
-    - name: write_file
+  allowed_tools: [write_file, exec_python]
 """
 
 
@@ -489,8 +472,12 @@ def decompose_goal(goal: str, first_n: int) -> list:
          )},
     ]
 
-    # Decompose needs more tokens than a normal task — use 2048 floor, ceiling at full ctx
-    decompose_budget = min(2048, CFG["model"].get("context_window", 8192))
+    # Decompose needs more tokens than a normal task — use 2048 floor
+    # Use context_window for input budget (max_tokens is output limit only)
+    context_window = CFG["model"].get("context_window", 8192)
+    # 4B MoE models need very tight budget for decompose to avoid empty choices
+    # Qwen3-Coder-Next-MXFP4_MOE has issues with larger budgets
+    decompose_budget = min(512, int(context_window * 0.25))  # 25% buffer for MoE models
 
     try:
         raw, tokens, finish, elapsed = call_model(messages, budget=decompose_budget)
