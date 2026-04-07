@@ -233,11 +233,17 @@ def as_dict(ticket: Union[Ticket, dict]) -> dict:
     Return a plain dict regardless of input type.
     Use this in runner.py call-sites still using ticket.get("field") syntax
     to stay backward compatible during incremental migration.
+    
+    NOTE: Includes both "ticket_id" (canonical) and "id" (legacy alias) for
+    backward compatibility with runner.py call-sites that expect "id".
     """
     if isinstance(ticket, Ticket):
         data = ticket.to_dict()
         extras = getattr(ticket, "_extras", {})
         data.update(extras)
+        # Legacy alias: runner.py expects "id" for backward compatibility
+        if "ticket_id" in data and "id" not in data:
+            data["id"] = data["ticket_id"]
         if data.get("status") == "pending":
             data["status"] = "open"
         return data
