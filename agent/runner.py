@@ -66,21 +66,13 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 BUDGET_FLOOR   = 256
 BUDGET_CEILING = int(CFG["model"].get("context_window", 8192) * 0.4)  # 40% of ctx
 
-# Words in the task description roughly predict output size needed
 WORDS_PER_TOKEN = 0.75
 OUTPUT_RATIO    = 4.0   # output tokens ≈ 4× input words for code tasks
 
 def token_budget(ticket: dict) -> int:
-    """
-    Derive a per-ticket token budget from task length.
-    Short tasks (verify, read) get FLOOR.
-    Long tasks (write, generate) scale up to CEILING.
-    Never exceeds context_window * 0.4.
-    """
     task_words  = len(str(ticket.get("task", "")).split())
     estimate    = int(task_words / WORDS_PER_TOKEN * OUTPUT_RATIO)
     budget      = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
-    # Explicit override in ticket always wins
     return int(ticket.get("max_tokens", budget))
 
 
@@ -151,15 +143,10 @@ def next_ticket_id() -> str:
 # ── result forwarding ─────────────────────────────────────────────────────────
 
 def result_summary(result_path: str) -> str:
-    """
-    Extract a compact summary from a closed ticket's result file.
-    This is injected as context into dependent tickets.
-    """
     if not os.path.exists(result_path):
         return ""
     with open(result_path, "r", encoding="utf-8") as f:
         content = f.read()
-    # Return the tool results section only — not the full hw telemetry
     marker = "=== tool results ==="
     if marker in content:
         return content.split(marker, 1)[1].strip()[:800]
@@ -167,10 +154,6 @@ def result_summary(result_path: str) -> str:
 
 
 def inject_upstream_context(ticket: dict) -> str:
-    """
-    For each dependency, read its closed result and build a context block.
-    Returns a formatted string ready to append to the user prompt.
-    """
     deps = ticket.get("depends_on") or []
     if not deps:
         return ""
@@ -191,11 +174,11 @@ def inject_upstream_context(ticket: dict) -> str:
 
 def call_model(messages: list, budget: int) -> tuple:
     """
-    Call model with retry on empty/null choices.
+    Single guarded model call used everywhere — decompose AND execute.
     Returns (raw_text, total_tokens, finish_reason, elapsed_s).
     Raises RuntimeError after all retries exhausted.
     """
-    for attempt in range(1, MAX_RETRIES + 2):  # +2: attempts=2 means 3 tries total
+    for attempt in range(1, MAX_RETRIES + 2):
         try:
             t0       = time.perf_counter()
             response = client.chat.completions.create(
@@ -357,11 +340,9 @@ Rules:
 def build_prompt(ticket: dict, upstream_context: str) -> str:
     prompt  = TOOL_SYNTAX
     prompt += f"\nTask: {ticket['task']}"
-    # inject context_files declared in ticket
     for cf in (ticket.get("context_files") or []):
         content = tool_read_file(cf)
         prompt += f"\n\n--- {cf} ---\n{content}"
-    # inject upstream results from completed dependencies
     if upstream_context.strip():
         prompt += f"\n\n--- upstream results ---\n{upstream_context}"
     return prompt
@@ -370,10 +351,6 @@ def build_prompt(ticket: dict, upstream_context: str) -> str:
 # ── execute one ticket ────────────────────────────────────────────────────────
 
 def execute_ticket(ticket_path: str) -> bool:
-    """
-    Execute a single ticket. Returns True on pass, False on fail.
-    Moves ticket to closed/ on pass, leaves in open/ for retry/fail handling.
-    """
     ticket    = load_ticket(ticket_path)
     ticket_id = ticket.get("ticket_id", Path(ticket_path).stem)
     result_path = ticket.get("result_path", f"{LOG_DIR}/{ticket_id}-result.txt")
@@ -416,7 +393,6 @@ def execute_ticket(ticket_path: str) -> bool:
                   hw_pre, hw_post, tool_results, reason)
 
     if passed:
-        # close ticket
         ticket["status"]     = "closed"
         ticket["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         dest = os.path.join(CLOSED_DIR, os.path.basename(ticket_path))
@@ -430,7 +406,6 @@ def execute_ticket(ticket_path: str) -> bool:
 
 
 def _evaluate(result_path: str, tool_results: list) -> tuple:
-    """Pass/fail heuristics on tool output."""
     if not tool_results:
         return False, "no tool calls detected"
     for tool, path, result in tool_results:
@@ -498,50 +473,60 @@ Output format (one or more):
 
 
 def decompose_goal(goal: str, first_n: int) -> list:
+    """
+    Decompose a plain-English goal into a list of ticket dicts.
+    Routes through call_model() — same retry + empty-choice guard as execute_ticket.
+    """
     print(f"[runner] decomposing goal...")
-    raw = ""
+
+    messages = [
+        {"role": "system", "content": DECOMPOSE_SYSTEM},
+        {"role": "user",
+         "content": (
+             f"Goal: {goal}\n"
+             f"Start ticket numbering from TASK-{first_n:03d}.\n"
+             f"Output ONLY the YAML list."
+         )},
+    ]
+
+    # Decompose needs more tokens than a normal task — use 2048 floor, ceiling at full ctx
+    decompose_budget = min(2048, CFG["model"].get("context_window", 8192))
+
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": DECOMPOSE_SYSTEM},
-                {"role": "user",
-                 "content": f"Goal: {goal}\nStart ticket numbering from TASK-{first_n:03d}.\nOutput ONLY the YAML list."},
-            ],
-            max_tokens=2048,
-            temperature=0.1,
-            timeout=TIMEOUT * 2,
-        )
-        if response.choices:
-            raw = response.choices[0].message.content or ""
-    except Exception as e:
-        print(f"[runner] decompose error: {e}")
+        raw, tokens, finish, elapsed = call_model(messages, budget=decompose_budget)
+    except RuntimeError as e:
+        print(f"[runner] decompose failed: {e}")
         return []
 
-    tokens = response.usage.total_tokens if response.usage else 0
-    print(f"[runner] decompose: {tokens} tokens")
+    print(f"[runner] decompose: {tokens} tokens  elapsed={elapsed}s  finish={finish}")
 
+    # strip markdown fences if model wrapped output anyway
     cleaned = re.sub(r'^```[\w]*\n?', '', raw.strip(), flags=re.MULTILINE)
     cleaned = re.sub(r'```$', '', cleaned.strip())
+
     try:
         tickets = yaml.safe_load(cleaned)
-        return tickets if isinstance(tickets, list) else []
+        if not isinstance(tickets, list):
+            print(f"[runner] decompose: expected list, got {type(tickets).__name__}")
+            print(f"[runner] decompose raw:\n{raw[:400]}")
+            return []
+        return tickets
     except yaml.YAMLError as e:
         print(f"[runner] YAML parse error: {e}")
+        print(f"[runner] decompose raw:\n{raw[:400]}")
         return []
 
 
 def write_tickets(tickets: list) -> None:
     for t in tickets:
         tid = t.get("ticket_id", next_ticket_id())
-        t.setdefault("status",          "open")
-        t.setdefault("depth",           0)
-        t.setdefault("max_depth",       2)
-        t.setdefault("created_at",      time.strftime("%Y-%m-%d"))
-        t.setdefault("updated_at",      time.strftime("%Y-%m-%d"))
-        t.setdefault("result_path",     f"{LOG_DIR}/{tid}-result.txt")
-        t.setdefault("context_files",   [])
-        # no max_tokens default — token_budget() will derive it
+        t.setdefault("status",        "open")
+        t.setdefault("depth",         0)
+        t.setdefault("max_depth",     2)
+        t.setdefault("created_at",    time.strftime("%Y-%m-%d"))
+        t.setdefault("updated_at",    time.strftime("%Y-%m-%d"))
+        t.setdefault("result_path",   f"{LOG_DIR}/{tid}-result.txt")
+        t.setdefault("context_files", [])
         path = os.path.join(OPEN_DIR, f"{tid}.yaml")
         save_ticket(path, t)
         print(f"[runner] ticket → {path}")
@@ -555,15 +540,8 @@ def drain(once: bool = False) -> None:
       - no open tickets remain, OR
       - all remaining open tickets have unmet deps AND nothing was dispatched
         in the last full pass (deadlock guard).
-
-    On each pass:
-      1. Scan open tickets
-      2. Dispatch all whose deps are met
-      3. On pass, close ticket + results forward automatically on next pass
-      4. On fail, increment depth; at max_depth move to failed/
-      5. Loop until drained or deadlocked
     """
-    max_depth = int(CFG["tickets"].get("decrement_default", 3))  # reuse as max_depth
+    max_depth = int(CFG["tickets"].get("decrement_default", 3))
 
     while True:
         tickets = scan_open()
@@ -586,12 +564,11 @@ def drain(once: bool = False) -> None:
                 continue
 
             dispatched_this_pass += 1
-            depth     = int(ticket.get("depth", 0))
-            passed    = execute_ticket(ticket_path)
+            depth  = int(ticket.get("depth", 0))
+            passed = execute_ticket(ticket_path)
 
             if not passed:
                 if depth < max_depth:
-                    # re-queue with incremented depth
                     ticket["depth"]      = depth + 1
                     ticket["status"]     = "open"
                     ticket["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -609,7 +586,6 @@ def drain(once: bool = False) -> None:
             if once:
                 return
 
-        # Deadlock guard: if nothing was dispatched and tickets remain, exit
         if dispatched_this_pass == 0 and deferred:
             print(f"[runner] deadlock — {len(deferred)} ticket(s) blocked on unmet deps:")
             for p in deferred:
@@ -644,7 +620,6 @@ def main() -> None:
 
     prewarm()
 
-    # --goal mode
     goal = None
     for i, arg in enumerate(sys.argv):
         if arg == "--goal" and i + 1 < len(sys.argv):
