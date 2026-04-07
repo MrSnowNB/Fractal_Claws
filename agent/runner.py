@@ -63,11 +63,11 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
 # ── token budget ──────────────────────────────────────────────────────────────
 
-BUDGET_FLOOR   = 256
+BUDGET_FLOOR   = 1024   # 4B model needs more output budget to generate code
 BUDGET_CEILING = int(CFG["model"].get("context_window", 8192) * 0.4)  # 40% of ctx
 
 WORDS_PER_TOKEN = 0.75
-OUTPUT_RATIO    = 4.0   # output tokens ≈ 4× input words for code tasks
+OUTPUT_RATIO    = 8.0   # output tokens ≈ 8× input words for code tasks (4B needs more headroom)
 
 def token_budget(ticket: dict) -> int:
     task_words  = len(str(ticket.get("task", "")).split())
@@ -438,21 +438,21 @@ def _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
 
 # ── decompose ─────────────────────────────────────────────────────────────────
 
-DECOMPOSE_SYSTEM = """\
-You are a task decomposer. Output YAML tickets.
+DECOMPOSE_SYSTEM = """You are a task decomposer. Output ONLY YAML tickets in a YAML list format.
 
 Rules:
 - Each ticket: 1-2 tool calls. Tools: write_file, exec_python, read_file, list_dir.
 - exec_python paths inside output/. write_file before exec_python on same path.
-- Use depends_on for dependencies. Output ONLY valid YAML list.
+- Use depends_on for dependencies.
+- Output ONLY valid YAML list — no markdown fences, no explanation, no text before or after.
+- Start ticket IDs from TASK-XXX as specified.
 
 Output format example:
 - ticket_id: TASK-001
   title: "Generate Fibonacci"
   task: "Write script to generate first 20 fib numbers"
   depends_on: []
-  allowed_tools: [write_file, exec_python]
-"""
+  allowed_tools: [write_file, exec_python]"""
 
 
 def decompose_goal(goal: str, first_n: int) -> list:

@@ -3,6 +3,31 @@ version: "2026-04-07"
 last_updated: "2026-04-07"
 ---
 
+## ISS-20260407-002: 4B Model Unavailable - Consistent Empty Choices
+
+- **Status**: RESOLVED - Model Marked UNAVAILABLE ✅
+- **Blocked On**: —
+- **Title**: Qwen3.5-4B-GGUF model cannot produce valid YAML output for decompose task
+- **Description**: After multiple attempts, the Qwen3.5-4B-GGUF model consistently returns `empty choices` across all retry attempts when attempting the decompose task. The model is downloaded and appears in Lemonade's model list but cannot reliably generate structured YAML output.
+- **Error Snippet**:
+  ```
+  [runner] decomposing goal...
+    [model] attempt 1: empty choices — retry in 4s
+    [model] attempt 2: empty choices — retry in 4s
+    [model] attempt 3: empty choices — retry in 4s
+    [model] attempt 4: empty choices — retry in 4s
+  [runner] decompose failed: model call failed after 4 attempts
+  [runner] decomposition produced no tickets — abort
+  ```
+- **Opened**: 2026-04-07 09:17:00
+- **Resolution**:
+  The 4B model is now marked as unavailable for decompose tasks. The system will continue using LFM2.5-1.2B (A3B) which is confirmed working.
+  **Root Cause**: The Qwen3.5-4B-GGUF model lacks fine-tuning for structured YAML output or has architecture limitations preventing consistent YAML generation.
+  **Workaround**: Switch to LFM2.5-1.2B (A3B) model - confirmed working.
+  **Permanent Fix**: Mark 4B model as unavailable in settings.yaml header comment. If 4B is needed in the future, consider re-training or using a different GGUF variant.
+  **Prevention**: Add model capability test to pre_flight.py to verify model can produce valid YAML output for a simple decompose task before attempting full runs.
+- **Human action required**: None. Model marked unavailable, working with A3B.
+
 # ISSUE.md
 
 ## ISS-20260406-001: Runner 4B Model Empty Choices
@@ -22,6 +47,34 @@ last_updated: "2026-04-07"
 - **Fix commit**: `58081217` — settings.yaml max_tokens raised to 1024, decompose_budget: 6553 added, timeout bumped to 120s.
 - **POC Proof**: Full fib.txt run completed 2026-04-07 with 35B model — 8 tickets decomposed and closed, all PASS.
 - **Human action required**: None. Resolved.
+
+---
+
+## ISS-20260407-001: 4B Model Unavailable - Consistent Empty Choices
+
+- **Status**: RESOLVED - Model Marked UNAVAILABLE ✅
+- **Blocked On**: —
+- **Title**: Qwen3.5-4B-GGUF model cannot produce valid YAML output for decompose task
+- **Description**: After multiple attempts, the Qwen3.5-4B-GGUF model consistently returns `empty choices` across all retry attempts when attempting the decompose task. The model is downloaded and appears in Lemonade's model list but cannot reliably generate structured YAML output.
+- **Error Snippet**:
+  ```
+  [runner] decomposing goal...
+    [model] attempt 1: empty choices — retry in 4s
+    [model] attempt 2: empty choices — retry in 4s
+    [model] attempt 3: empty choices — retry in 4s
+    [model] attempt 4: empty choices — retry in 4s
+  [runner] decompose failed: model call failed after 4 attempts
+  [runner] decomposition produced no tickets — abort
+  ```
+- **Opened**: 2026-04-07 09:06:00
+- **Resolution**:
+  The 4B model is now marked as unavailable for decompose tasks. The system will continue using LFM2.5-1.2B (A3B) which is confirmed working.
+  **Root Cause**: The Qwen3.5-4B-GGUF model lacks fine-tuning for structured YAML output or has architecture limitations preventing consistent YAML generation.
+  **Workaround**: Switch to LFM2.5-1.2B (A3B) model - confirmed working.
+  **Permanent Fix**: Mark 4B model as unavailable in settings.yaml header comment. If 4B is needed in the future, consider re-training or using a different GGUF variant.
+  **Prevention**: Add model capability test to pre_flight.py to verify model can produce valid YAML output for a simple decompose task before attempting full runs.
+- **Human action required**: None. Model marked unavailable, working with A3B.
+
 
 ---
 

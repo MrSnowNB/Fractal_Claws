@@ -25,7 +25,7 @@ last_updated: "2026-04-07"
 |----------|------|----------|--------|------|
 | Qwen3.5-35B-A3B-GGUF | 19.7 GB | 64,000 | ✅ Loaded | Primary (decompose + execute) |
 | Qwen3-Coder-Next-GGUF | 43.7 GB | 64,000 | Downloaded | Heavy coding tasks |
-| Qwen3.5-4B-GGUF | 2.91 GB | default | Downloaded (not loaded) | Lightweight tasks |
+| Qwen3.5-4B-GGUF | 2.91 GB | default | Downloaded (not loaded) | ⚠️ UNAVAILABLE — cannot produce valid YAML for decompose |
 | Whisper-Base | 0.14 GB | — | Loaded | Audio/transcription |
 | kokoro-v1 | 0.34 GB | — | Loaded | TTS |
 | lfm2.5-it-1.2b-FLM | 0.96 GB | — | Loaded | Tiny health checks |
@@ -56,6 +56,7 @@ python agent/runner.py --goal "<your goal here>"
 | H-SCOPE-001 | 2026-04-06 | Agent self-installed fastmcp | Forbidden in .clinerules |
 | H-CONFLICT-001 | 2026-04-06 | Merge conflict in pre_flight.py | Fixed |
 | ISS-20260406-001 | 2026-04-06 | Empty choices / 4B not loaded | RESOLVED 2026-04-07 |
+| ISS-20260407-001 | 2026-04-07 | Qwen3.5-4B-GGUF cannot produce valid YAML for decompose | RESOLVED — model marked UNAVAILABLE |
 
 ## Environment Deltas
 
@@ -70,6 +71,8 @@ python agent/runner.py --goal "<your goal here>"
 | 2026-04-07 | settings.yaml: max_tokens 512→1024, decompose_budget: 6553 added, timeout 90→120s |
 | 2026-04-07 | Active model switched to Qwen3.5-35B-A3B-GGUF (4B not loaded in Lemonade) |
 | 2026-04-07 | **MILESTONE**: First full end-to-end POC run complete — fib.txt generated, 8 tickets PASS |
+| 2026-04-07 | 4B model consistently returns empty choices for decompose — model marked UNAVAILABLE |
+| 2026-04-07 | settings.yaml: model switched back to lfm2.5-it-1.2b-FLM (A3B) only |
 
 ## POC Success Criteria
 

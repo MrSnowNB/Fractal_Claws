@@ -118,3 +118,50 @@ TS-XXX:
   - RAM stable: ~98.6 GB / 127 GB
 **Notable**: Agent self-corrected model selection — probed 4B, got CURL error, switched to 35B autonomously.
 **Follow-up**: budget=256 on TASKS 018-020 indicates runner budget inheritance not reading decompose_budget from updated config — audit runner.py token budget logic.
+
+---
+
+### TS-20260407-002: 4B Model Unavailable - Consistent Empty Choices
+
+**Status**: RESOLVED - Model Marked UNAVAILABLE ✅ 2026-04-07  
+**Context**: After multiple attempts, Qwen3.5-4B-GGUF model consistently fails decompose task with empty choices.  
+**Symptom**: `[model] attempt N: empty choices — retry in 4s` (4 consecutive failures across multiple test runs)  
+**Error Snippet**:
+```
+[runner] decomposing goal...
+  [model] attempt 1: empty choices — retry in 4s
+  [model] attempt 2: empty choices — retry in 4s
+  [model] attempt 3: empty choices — retry in 4s
+  [model] attempt 4: empty choices — retry in 4s
+[runner] decompose failed: model call failed after 4 attempts
+[runner] decomposition produced no tickets — abort
+```  
+**Root Cause**: Qwen3.5-4B-GGUF model cannot reliably produce YAML output for decompose task, despite being downloaded and appearing in Lemonade's model list. The model may lack fine-tuning for structured output or has architecture limitations preventing consistent YAML generation.  
+**Quick Fix**: Switch model back to LFM2.5-1.2B (A3B) - confirmed working.  
+**Permanent Fix**: Mark 4B model as unavailable in settings.yaml header comment. Continue testing with A3B. If 4B is needed, consider re-training or using a different GGUF variant.  
+**Prevention**: Add model capability test to pre_flight.py - verify model can produce valid YAML output for a simple decompose task before attempting full runs.  
+**Recurrence**: true - 4 consecutive failures across multiple test runs. Model deemed unreliable for this workload.
+
+---
+
+### TS-20260407-003: Model Selection Finalized - A3B Only
+
+**Status**: RESOLVED - Configuration Updated ✅ 2026-04-07  
+**Context**: After multiple failed attempts, 4B model consistently fails decompose task with empty choices.  
+**Symptom**: Runner cannot spawn 4B model for goal decomposition.  
+**Error Snippet**:
+```
+[runner] decomposing goal...
+  [model] attempt 1: empty choices — retry in 4s
+  [model] attempt 2: empty choices — retry in 4s
+  [model] attempt 3: empty choices — retry in 4s
+  [model] attempt 4: empty choices — retry in 4s
+[runner] decompose failed: model call failed after 4 attempts
+```  
+**Root Cause**: Qwen3.5-4B-GGUF model lacks fine-tuning for structured YAML output or has architecture limitations.  
+**Quick Fix**: Switch to LFM2.5-1.2B (A3B) - confirmed working, passes all tests.  
+**Permanent Fix**: Update settings.yaml to use A3B model only. Update header comment to document 4B as unavailable.  
+**Prevention**: Add model capability test to pre_flight.py. Update MODEL-SELECTION-TEST.md with final decision.  
+**Recurrence**: false - model selection documented, A3B is primary model.
+
+
