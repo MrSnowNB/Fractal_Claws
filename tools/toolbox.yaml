@@ -26,6 +26,12 @@ tools:
     sandbox: output/
     description: Execute a Python file. Restricted to output/ directory.
 
+  - name: terminal
+    path: tools/terminal.py
+    stage: bud
+    risk: medium
+    description: Run a shell command and log to luffy-journal.jsonl. Returns stdout/stderr/returncode as JSON.
+
   # ── BRANCH STAGE (extended) ───────────────────────────────────────────────
 
   - name: shell
