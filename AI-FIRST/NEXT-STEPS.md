@@ -1,114 +1,115 @@
-# Fractal Claws — Next Steps (Phase 3)
+# Fractal Claws — Next Steps (AI-FIRST)
 
-> Read `AI-FIRST/CONTEXT.md` and `AI-FIRST/ARCHITECTURE.md` before this file.
-
----
-
-## Where We Are
-
-The validated gate (2026-04-07) confirmed:
-
-- `Ticket` dataclass is stable (`from_dict` / `to_dict` round-trip proven)
-- 5-phase multistep harness passes 6/6
-- Deadlock detection works correctly
-- Ticket lifecycle (open → in_progress → closed/failed) is implemented in runner
-
-The runner currently treats tickets as **raw dicts** loaded from YAML. Phase 3
-wires the `Ticket` dataclass into the runner for schema validation and type safety.
+> **AI-FIRST DOC** — This is the canonical build queue for coding agents.
+> Each step has a status, a validation gate, and a link to its full spec.
+> An agent should complete the gate before marking a step DONE.
+> This file is vendor-agnostic: no model names, no endpoint URLs.
 
 ---
 
-## Phase 3: OpenClaw Tool Registry
+## How to Use This File
 
-Full specification in `OPENCLAW-PLAN.md`. Summary of entry points:
-
-### 3.1 Wire Ticket Dataclass into Runner
-
-**Target file:** `agent/runner.py`
-
-**What to change:**
-- Replace raw `yaml.safe_load()` dict handling with `Ticket.from_dict()`
-- Add `load_ticket(path: Path) -> Ticket` and `save_ticket(ticket: Ticket, path: Path)` helpers
-- All internal runner logic should operate on `Ticket` objects, not dicts
-- `ticket.to_dict()` when writing back to YAML
-
-**Acceptance test:** Existing gate (`tests/test_multistep_harness.py`) must
-still pass 6/6 after this change. No new failures.
-
-### 3.2 Tool Call Schema Validation
-
-**Target files:** `tools/read_file.py`, `tools/write_file.py`, new `tools/exec_python.py`
-
-**What to add:**
-- Each tool exposes a JSON Schema in a `TOOL_SCHEMA` dict
-- Runner validates tool call args against schema before dispatch
-- Invalid args raise `ToolValidationError` (new exception class in `src/`)
-- Add `tests/test_tool_registry.py` to cover schema validation
-
-### 3.3 Result Validation Gate
-
-**Target file:** `agent/runner.py`
-
-**What to add:**
-- After child writes `logs/<id>-result.txt`, runner validates the result file exists
-- Runner reads the result and checks for a `PASS` or `FAIL` verdict line
-- On `FAIL`: increment `ticket.attempts`, decrement `ticket.decrement`;
-  if `decrement == 0`, move to `tickets/failed/`; else re-queue
-- On `PASS`: set `ticket.status = TicketStatus.CLOSED`, move to `tickets/closed/`
-
-### 3.4 HarnessTrace Integration (Optional)
-
-**Target file:** `agent/runner.py`
-
-**What to add:**
-- Import `HarnessTrace` and `_stamp` from `tests/test_multistep_harness.py`
-  (or extract to `src/trace.py`)
-- Runner stamps a trace event at every major state transition
-- Trace written to `logs/<id>-trace.jsonl` alongside the attempts log
-- Enables post-mortem inspection of live runs, not just test runs
+1. Read the current `[ ]` step
+2. Read the linked `STEP-XX-*.md` spec in `AI-FIRST/`
+3. Build the code
+4. Run the validation gate: `python -m pytest tests/test_<module>.py -v`
+5. All tests green → mark step `[x] DONE` → move to next step
 
 ---
 
-## Open Issues
+## Build Queue
 
-| Issue | File | Priority |
-|---|---|---|
-| Runtime tickets absent from repo due to `.gitignore` | `tickets/open/` | Medium — use `--goal` to generate |
-| `session.jsonl` still tracked in git | `experiments/daemon/logs/session.jsonl` | Low — `git rm --cached` it |
-| Depth=2 (LEAF) model slot unassigned | `settings.yaml` | Deferred until NPU |
-| `conftest.py` fixture uses `Ticket` but no `test_mode` param | `tests/conftest.py` | Low |
+### [x] DONE — Step 1: Typed Ticket I/O Bridge
+**Spec:** `AI-FIRST/STEP-01-TICKET-IO.md`  
+**File:** `src/ticket_io.py`  
+**Gate:** `python -m pytest tests/test_ticket_io.py -v`  
+**What it does:** Bridges raw-dict YAML loading in runner.py with the canonical  
+`Ticket` dataclass in operator_v7.py. Adds schema validation, enum coercion,  
+status aliasing, and a backward-compatible `as_dict()` shim for incremental migration.  
 
 ---
 
-## Pre-Phase-3 Checklist
+### [ ] Step 2: Terminal Tool + Tool Registry
+**Spec:** `AI-FIRST/STEP-02-TERMINAL-REGISTRY.md` *(to be written)*  
+**Files:** `tools/terminal.py`, `tools/registry.py`  
+**Gate:** `python -m pytest tests/test_tools.py -v` *(to be written)*  
+**What it does:**  
+- `tools/terminal.py` — wraps `subprocess.run` with a `TOOL_SCHEMA` dict,
+  `DANGEROUS_PATTERNS` denylist, sandbox path enforcement, and timeout.
+  Gives the agent shell access to any CLI binary on the machine.
+- `tools/registry.py` — maps tool name strings to callables + validates args
+  against `TOOL_SCHEMA`. Replaces the hardcoded `if tool == "read_file"` dispatch
+  in runner.py with a dynamic registry.
 
-Before writing any Phase 3 code, verify:
+**Unlock:** Once this step is complete, the agent can call `nmap`, `git`,
+`meshtastic`, `gpg`, `ffmpeg`, and any other installed binary as a ticket action.
 
-```powershell
-# Full gate must be green
-pytest tests/ -v
+---
 
-# Deadlock smoke test
-python agent/runner.py --no-prewarm
+### [ ] Step 3: Wire Registry into runner.py
+**Spec:** `AI-FIRST/STEP-03-RUNNER-WIRING.md` *(to be written)*  
+**File:** `agent/runner.py` (refactor)  
+**Gate:** `python -m pytest tests/test_runner_dispatch.py -v` *(to be written)*  
+**What it does:**  
+- Replaces hardcoded `if/elif tool ==` dispatch in `parse_and_run_tools()`
+  with `registry.call(name, args)`
+- Replaces raw `load_ticket` / `save_ticket` calls with `ticket_io` versions
+  (Phase A migration: `as_dict()` shim, zero breakage)
+- All existing runner tests must still pass
 
-# No import errors
-python -c "import sys; sys.path.insert(0, 'src'); from operator_v7 import Ticket, TicketStatus, TicketPriority; print('OK')"
+---
+
+### [ ] Step 4: Trajectory Extractor
+**Spec:** `AI-FIRST/STEP-04-TRAJECTORY.md` *(to be written)*  
+**File:** `src/trajectory_extractor.py`  
+**Gate:** `python -m pytest tests/test_trajectory.py -v` *(to be written)*  
+**What it does:**  
+- Post-run pass: reads `logs/<ticket_id>-attempts.jsonl`
+- Identifies winning execution paths (outcome=pass chains)
+- Writes `skills/<goal-class>.yaml` with the compressed toolpath
+- This is the self-improving loop: Cline reads prior skills before decomposing,
+  skipping re-decomposition of known-good goal classes
+
+---
+
+### [ ] Step 5: Full Phase A Migration of runner.py
+**Spec:** `AI-FIRST/STEP-05-RUNNER-MIGRATION.md` *(to be written)*  
+**File:** `agent/runner.py` (full typed field access)  
+**Gate:** Full existing test suite passes + new typed-access tests  
+**What it does:**  
+- Migrates all `ticket.get("field")` call-sites to `ticket.field` attribute access
+- Removes `as_dict()` shim usage
+- `load_ticket()` in runner now returns `Ticket` directly (Phase C migration)
+
+---
+
+## Architecture Context
+
+The three-layer stack this build queue produces:
+
+```
+Layer 1: CLINE (Key-Brain / Orchestrator)
+  Reads goal → decomposes → writes YAML tickets
+  Evaluates results → escalates or closes
+
+Layer 2: FRACTAL CLAWS (Ticket Router / Gate)  ← this repo
+  Dependency graph → drain loop → deadlock detect
+  Typed Ticket contract (ticket_io) → audit JSONL
+  Tool registry → dispatches to execution layer
+
+Layer 3: HERMES-STYLE TOOLS (Execution Layer)
+  terminal, process, patch, search_files
+  web_search, vision, delegate_task, cronjob
+  Every CLI binary on the machine
 ```
 
-All three must pass before touching `agent/runner.py`.
+## Reproducibility Requirement
 
----
+Every step must be completable on any machine with:
+- Python 3.10+
+- `pip install pyyaml pytest`
+- No model, no endpoint, no API key required for tests
+- No network access required for tests
 
-## Suggested First Task for a New Agent
-
-If you are a new AI assistant and want a concrete first task:
-
-**Task:** Implement `load_ticket(path: Path) -> Ticket` and
-`save_ticket(ticket: Ticket, path: Path) -> None` as standalone functions
-in a new file `src/ticket_io.py`. These should wrap `yaml.safe_load` /
-`yaml.dump` with `Ticket.from_dict()` / `ticket.to_dict()`. Add
-`tests/test_ticket_io.py` that round-trips a ticket through write → read
-and asserts all fields are preserved.
-
-This is a self-contained, low-risk entry point that does not touch the runner
-or the existing gate tests.
+Integration tests (requiring a live model endpoint) go in `tests/integration/`
+and are always skipped by default (`pytest -m 'not integration'`).
