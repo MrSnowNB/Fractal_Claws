@@ -1,6 +1,6 @@
 ---
 title: AGENT-POLICY.md
-version: "2.1"
+version: "3.0"
 scope: single-parent / single-child ticket harness
 ---
 
@@ -12,11 +12,11 @@ Configured entirely in `settings.yaml`:
 
 ```yaml
 model:
-  id: <model-id>         # set this for your inference server
+  id: <model-id>         # child executor — currently A3B
   endpoint: <url>        # openai-compatible endpoint
   temperature: 0.2
-  context_window: 8192
-  timeout_seconds: 120
+  context_window: 64000
+  timeout_seconds: 180
   max_retries: 3
 ```
 
@@ -26,10 +26,14 @@ model:
 
 ## Roles
 
-| Role | Who | Tools |
-|------|-----|-------|
-| Parent | Cline in VS Code | shell, read_file, write_file, list_dir |
-| Child | runner.py (harness) | read_file, write_file, exec_python, list_dir |
+| Role | Who | Model | Tools |
+|------|-----|-------|-------|
+| Parent | Cline in VS Code | Qwen3-Coder-Next-GGUF (~80B) | shell, read_file, write_file, list_dir |
+| Child | runner.py (harness) | Qwen3.5-35B-A3B-GGUF (A3B) | read_file, write_file, exec_python, list_dir |
+
+> **4B Model: DEPRECATED** — Qwen3.5-4B-GGUF is deferred to a future integration phase.
+> Do not reference, load, or test the 4B model during active ticket harness sessions.
+> It may be re-introduced later as a leaf/worker node once its YAML generation issues are resolved.
 
 ---
 
@@ -53,10 +57,10 @@ Plan → Ticket → Spawn → Result → Validate → Done
 
 | Phase | Who | Action |
 |-------|-----|--------|
-| Plan | Parent | Understand task, write ticket YAML |
+| Plan | Parent (Cline) | Understand task, write ticket YAML |
 | Ticket | Parent | Write to `tickets/open/` |
 | Spawn | Parent | `python agent/runner.py --once` or `--goal` |
-| Result | Runner | Read context, execute tools, write result, close ticket |
+| Result | Runner (A3B) | Read context, execute tools, write result, close ticket |
 | Validate | Parent | Run 4 gates |
 | Done | Parent | Confirm all gates green |
 

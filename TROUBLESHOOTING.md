@@ -1,6 +1,6 @@
 ---
 title: TROUBLESHOOTING Guide
-version: "0.2.0"
+version: "0.3.0"
 last_updated: "2026-04-07"
 ---
 
@@ -121,47 +121,39 @@ TS-XXX:
 
 ---
 
-### TS-20260407-002: 4B Model Unavailable - Consistent Empty Choices
+### TS-20260407-002: 4B Model Empty Choices (Historical)
 
-**Status**: RESOLVED - Model Marked UNAVAILABLE ✅ 2026-04-07  
-**Context**: After multiple attempts, Qwen3.5-4B-GGUF model consistently fails decompose task with empty choices.  
-**Symptom**: `[model] attempt N: empty choices — retry in 4s` (4 consecutive failures across multiple test runs)  
-**Error Snippet**:
-```
-[runner] decomposing goal...
-  [model] attempt 1: empty choices — retry in 4s
-  [model] attempt 2: empty choices — retry in 4s
-  [model] attempt 3: empty choices — retry in 4s
-  [model] attempt 4: empty choices — retry in 4s
-[runner] decompose failed: model call failed after 4 attempts
-[runner] decomposition produced no tickets — abort
-```  
-**Root Cause**: Qwen3.5-4B-GGUF model cannot reliably produce YAML output for decompose task, despite being downloaded and appearing in Lemonade's model list. The model may lack fine-tuning for structured output or has architecture limitations preventing consistent YAML generation.  
-**Quick Fix**: Switch model back to LFM2.5-1.2B (A3B) - confirmed working.  
-**Permanent Fix**: Mark 4B model as unavailable in settings.yaml header comment. Continue testing with A3B. If 4B is needed, consider re-training or using a different GGUF variant.  
-**Prevention**: Add model capability test to pre_flight.py - verify model can produce valid YAML output for a simple decompose task before attempting full runs.  
-**Recurrence**: true - 4 consecutive failures across multiple test runs. Model deemed unreliable for this workload.
+**Status**: DEPRECATED — NOT A BLOCKER ✅ 2026-04-07  
+**Context**: Qwen3.5-4B-GGUF consistently fails decompose task with empty choices across multiple test runs.  
+**Root Cause**: Model not loaded in Lemonade slot + no ctx_size in recipe_options + likely insufficient fine-tuning for structured YAML output.  
+**Resolution**: 4B formally deprecated and deferred to future integration phase. Active harness uses Coder-Next (parent) + A3B (child). 4B is not a blocker — it was never part of the ticketing system test.  
+**Recurrence**: N/A — model removed from active rotation.
 
 ---
 
-### TS-20260407-003: Model Selection Finalized - A3B Only
+### TS-20260407-003: Model Selection Finalized
 
-**Status**: RESOLVED - Configuration Updated ✅ 2026-04-07  
-**Context**: After multiple failed attempts, 4B model consistently fails decompose task with empty choices.  
-**Symptom**: Runner cannot spawn 4B model for goal decomposition.  
-**Error Snippet**:
-```
-[runner] decomposing goal...
-  [model] attempt 1: empty choices — retry in 4s
-  [model] attempt 2: empty choices — retry in 4s
-  [model] attempt 3: empty choices — retry in 4s
-  [model] attempt 4: empty choices — retry in 4s
-[runner] decompose failed: model call failed after 4 attempts
-```  
-**Root Cause**: Qwen3.5-4B-GGUF model lacks fine-tuning for structured YAML output or has architecture limitations.  
-**Quick Fix**: Switch to LFM2.5-1.2B (A3B) - confirmed working, passes all tests.  
-**Permanent Fix**: Update settings.yaml to use A3B model only. Update header comment to document 4B as unavailable.  
-**Prevention**: Add model capability test to pre_flight.py. Update MODEL-SELECTION-TEST.md with final decision.  
-**Recurrence**: false - model selection documented, A3B is primary model.
+**Status**: RESOLVED ✅ 2026-04-07  
+**Context**: Final model assignment for ticketing system test phase.  
+**Decision**:
+  - Parent (Cline): Qwen3-Coder-Next-GGUF (~80B)
+  - Child (runner.py): Qwen3.5-35B-A3B-GGUF
+  - 4B: DEPRECATED — deferred to future leaf/worker integration
+**Files updated**: settings.yaml, pre_flight.py, CLAUDE.md, AGENT-POLICY.md, MODEL-SELECTION-TEST.md, REPLICATION-NOTES.md  
+**Recurrence**: false
 
+---
 
+### TS-20260407-004: 4B Formal Deprecation Notice
+
+**Status**: DOCUMENTED ✅ 2026-04-07  
+**Context**: During session review it was identified that multiple files still referenced or directed the agent toward Qwen3.5-4B-GGUF, causing Cline to repeatedly attempt 4B model calls instead of focusing on the ticketing system test.  
+**Symptom**: Agent wasted cycles on 4B diagnosis; ticketing system test never started.  
+**Root Cause**: Documentation (TROUBLESHOOTING.md, MODEL-SELECTION-TEST.md, settings.yaml header) framed 4B as an active issue to fix rather than a deferred future integration.  
+**Fix**: All files updated in single commit to:
+  - Hard-block 4B in pre_flight.py (exit 1 with deprecation message)
+  - Set settings.yaml model.id = A3B, context_window = 64000
+  - Remove 4B from KNOWN_MODELS in pre_flight.py (commented out)
+  - Update all docs to frame 4B as DEPRECATED (future phase), not UNAVAILABLE (blocker)
+**Prevention**: Any reference to Qwen3.5-4B-GGUF in active session docs must include the label `DEPRECATED — future integration`. Do not create TROUBLESHOOTING entries for deprecated models unless they surface in an active run.  
+**Recurrence**: false

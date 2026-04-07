@@ -4,10 +4,18 @@ pre_flight.py — Inference readiness gate + Cline settings sync.
 Hardware: HP ZBook (single node)
 Endpoint: Lemonade at http://localhost:8000/api/v1
 
+Active harness models:
+  Parent (Cline):  Qwen3-Coder-Next-GGUF  (~80B, orchestrator)
+  Child (runner):  Qwen3.5-35B-A3B-GGUF   (executor, default probe target)
+
+DEPRECATED: Qwen3.5-4B-GGUF — deferred to future integration phase.
+  Do not reference 4B in active runs. Use 'python pre_flight.py 4b' only
+  if explicitly testing future 4B integration in isolation.
+
 Usage:
-    python pre_flight.py
-    python pre_flight.py 4b
-    python pre_flight.py Qwen3.5-4B-GGUF
+    python pre_flight.py                        # probe A3B (default)
+    python pre_flight.py a3b                    # probe A3B explicitly
+    python pre_flight.py Qwen3.5-35B-A3B-GGUF  # probe A3B by full ID
 """
 
 import sys
@@ -22,11 +30,17 @@ API_KEY     = "x"
 MAX_RETRIES = 15
 RETRY_DELAY = 8
 
-DEFAULT_MODEL = "Qwen3.5-4B-GGUF"
+# Default: child executor model (A3B)
+DEFAULT_MODEL = "Qwen3.5-35B-A3B-GGUF"
 
 KNOWN_MODELS = {
-    "4b":   "Qwen3.5-4B-GGUF",
-    "qwen": "Qwen3.5-4B-GGUF",
+    "a3b":  "Qwen3.5-35B-A3B-GGUF",
+    "35b":  "Qwen3.5-35B-A3B-GGUF",
+    "next": "Qwen3-Coder-Next-GGUF",
+    "coder": "Qwen3-Coder-Next-GGUF",
+    # 4B: DEPRECATED — deferred to future integration phase
+    # Uncomment only for isolated future 4B testing:
+    # "4b":  "Qwen3.5-4B-GGUF",
 }
 
 SETTINGS_PATHS = [
@@ -64,7 +78,13 @@ def update_cline_settings(model: str) -> None:
 
 
 def resolve_model(arg: str) -> str:
-    return KNOWN_MODELS.get(arg.lower(), arg)
+    key = arg.lower()
+    if key == "4b":
+        print("[pre_flight] WARNING: 4B model is DEPRECATED and deferred to future integration.")
+        print("[pre_flight] To test 4B in isolation, uncomment its entry in KNOWN_MODELS.")
+        print("[pre_flight] Aborting — use 'python pre_flight.py' to probe the active A3B model.")
+        sys.exit(1)
+    return KNOWN_MODELS.get(key, arg)
 
 
 def check(model: str) -> None:

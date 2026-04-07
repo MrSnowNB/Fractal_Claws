@@ -1,24 +1,24 @@
 # Fractal Claws - Model Configuration
-# Current Model: Qwen3.5-4B-GGUF (4B)
+# Harness: Cline (Qwen3-Coder-Next-GGUF, ~80B) as parent orchestrator
+#          runner.py (Qwen3.5-35B-A3B-GGUF) as child executor
 # Hardware: HP ZBook (single node)
 # Endpoint: Lemonade at localhost:8000
+#
+# 4B MODEL STATUS: DEPRECATED — deferred to future integration phase.
+# Do NOT reference Qwen3.5-4B-GGUF anywhere in active code or docs.
 
 model:
-  id: Qwen3.5-4B-GGUF
+  id: Qwen3.5-35B-A3B-GGUF        # child executor (A3B MoE, ctx_size: 64000)
   endpoint: http://localhost:8000/api/v1
   format: openai-compat
   api_key: x
   temperature: 0.2
-  max_tokens: 2048             # output token budget (not context window) - bumped for 4B model
-  decompose_budget: 2048       # output token budget for decompose - must not exceed max_tokens
-  context_window: 8192
-  timeout_seconds: 180         # bumped — decompose prompts need more time
+  max_tokens: 2048                 # output token budget (not context window)
+  decompose_budget: 2048           # output tokens for decompose phase
+  context_window: 64000            # A3B actual context window
+  timeout_seconds: 180
   max_retries: 3
   stream: false
-  perf:
-    gen_tok_per_sec: 40.9
-    ttft_s: 0.96
-    ram_used_gb: 27.0
   allowed_tools:
     - shell
     - read_file
