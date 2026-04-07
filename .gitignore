@@ -22,6 +22,8 @@ logs/*.log
 logs/*.jsonl
 logs/*-result.txt
 !logs/.gitkeep
+# Luffy audit journal — required artifact, must be tracked
+!logs/luffy-journal.jsonl
 
 # Tickets
 # open/   — tracked: Cline writes and pushes tickets here as durable work items
