@@ -1,0 +1,66 @@
+ticket_id: STEP-02-B
+title: "Build tools/registry.py — tool registration and dispatch"
+task: >
+  ## LUFFY LAW — LOG EVERYTHING
+  Before ANY action, append a start entry to logs/luffy-journal.jsonl:
+    python scripts/append_jsonl.py logs/luffy-journal.jsonl \
+      '{"ticket_id": "STEP-02-B", "step": "start", "action": "beginning STEP-02-B", "status": "start", "detail": ""}'
+  Log EVERY tool call, test run, fix attempt, and completion the same way.
+  Even on re-runs. Even if files already exist. Timestamp every entry.
+
+  ## STEP 1 — Read the spec
+  Read AI-FIRST/STEP-02-TERMINAL-REGISTRY.md (the tools/registry.py section).
+
+  ## STEP 2 — Implement tools/registry.py
+  Implement ToolRegistry, ToolNotFoundError, ToolArgError per the spec:
+    - register(name, fn, schema) — stores callable + schema
+    - call(name, args) — validates args, fills defaults, dispatches
+    - list_tools() — returns list of registered tool names
+    - ToolNotFoundError raised if name not in registry
+    - ToolArgError raised on missing required arg or wrong type
+    - Logs to logs/luffy-journal.jsonl on every dispatch
+
+  ## STEP 3 — Write tests/test_tools.py
+  Copy the full test file from AI-FIRST/STEP-02-TERMINAL-REGISTRY.md
+  (the ## Validation Gate section). Write it exactly as specified.
+
+  ## STEP 4 — Run the gate
+  python scripts/run_pytest_gate.py tests/test_tools.py
+  Log the full output.
+  If any tests fail, fix tools/terminal.py or tools/registry.py and re-run.
+  Repeat until exit code 0.
+  Log every attempt with status start/pass/fail.
+
+  ## STEP 5 — Commit and push
+  python scripts/git_commit_push.py "feat(step-2b): add tools/registry.py + test_tools gate — all green"
+  Log the commit SHA.
+  Report the SHA here.
+
+rationale: >
+  registry.py replaces hardcoded if/elif tool dispatch in runner.py with a
+  dynamic, schema-validated registry. Once this exists, any new tool is one
+  register() call away from being available to every ticket.
+
+produces:
+  - file:tools/registry.py
+  - file:tests/test_tools.py
+  - log:logs/luffy-journal.jsonl
+  - commit:step-02-b-pass
+
+consumes: [STEP-02-A]
+tags: [step-2, tools, registry, gate, logging]
+depends_on: [STEP-02-A]
+allowed_tools: [read_file, write_file, exec_python, exec_command]
+agent: ""
+status: open
+depth: 0
+max_depth: 1
+decrement: 3
+priority: high
+result_path: logs/STEP-02-B-result.txt
+context_files:
+  - AI-FIRST/STEP-02-TERMINAL-REGISTRY.md
+  - tools/terminal.py
+  - scripts/append_jsonl.py
+  - scripts/run_pytest_gate.py
+  - scripts/git_commit_push.py

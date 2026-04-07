@@ -1,0 +1,60 @@
+ticket_id: STEP-02-A
+title: "Build tools/terminal.py — sandboxed subprocess executor"
+task: >
+  ## LUFFY LAW — LOG EVERYTHING
+  Before ANY action, append a start entry to logs/luffy-journal.jsonl:
+    python scripts/append_jsonl.py logs/luffy-journal.jsonl \
+      '{"ticket_id": "STEP-02-A", "step": "start", "action": "beginning STEP-02-A", "status": "start", "detail": ""}'
+  Log EVERY tool call, test run, fix attempt, and completion the same way.
+  Even on re-runs. Even if files already exist. Timestamp every entry.
+
+  ## STEP 1 — Read the spec
+  Read AI-FIRST/STEP-02-TERMINAL-REGISTRY.md (the tools/terminal.py section).
+  Read scripts/append_jsonl.py (Toolbox T06 — use this for all logging).
+
+  ## STEP 2 — Create tools/__init__.py
+  Create an empty file at tools/__init__.py if it does not exist.
+
+  ## STEP 3 — Implement tools/terminal.py
+  Implement run_command() per the spec:
+    - Accepts: cmd (list), timeout (int, default 30), cwd (str, default None), allowed_paths (list, default None)
+    - Returns: dict with stdout, stderr, returncode, timed_out, blocked, elapsed_ms
+    - DANGEROUS_PATTERNS denylist: block before execution
+    - Timeout via subprocess.run(..., timeout=timeout)
+    - Logs to logs/luffy-journal.jsonl on call start and call return
+
+  ## STEP 4 — Run existing tests (do not write test_tools.py yet)
+  Run: python scripts/run_pytest_gate.py tests/test_ticket_io.py
+  Log the result. Confirm existing tests still pass.
+
+  ## STEP 5 — Commit
+  python scripts/git_commit_push.py "feat(step-2a): add tools/terminal.py — sandboxed run_command"
+  Log the commit SHA.
+
+rationale: >
+  terminal.py is the execution backbone. Every ticket that runs a shell command
+  goes through this. It must be safe (denylist), observable (logging), and
+  testable in isolation before the registry wires it in.
+
+produces:
+  - file:tools/terminal.py
+  - file:tools/__init__.py
+  - log:logs/luffy-journal.jsonl
+
+consumes: []
+tags: [step-2, tools, terminal, logging]
+depends_on: []
+allowed_tools: [read_file, write_file, exec_python, exec_command]
+agent: ""
+status: open
+depth: 0
+max_depth: 1
+decrement: 3
+priority: high
+result_path: logs/STEP-02-A-result.txt
+context_files:
+  - AI-FIRST/STEP-02-TERMINAL-REGISTRY.md
+  - scripts/append_jsonl.py
+  - scripts/run_pytest_gate.py
+  - scripts/git_commit_push.py
+  - src/operator_v7.py
