@@ -1,7 +1,7 @@
 ---
 title: TROUBLESHOOTING Guide
-version: "0.1.0"
-last_updated: "2026-04-06"
+version: "0.2.0"
+last_updated: "2026-04-07"
 ---
 
 # TROUBLESHOOTING.md — Failure Log
@@ -74,24 +74,47 @@ TS-XXX:
 
 ### TS-20260406-001: Runner 4B Model Empty Choices
 
+**Status**: RESOLVED ✅ 2026-04-07  
 **Context**: Runner attempts to spawn Qwen3.5-4B-GGUF model via Lemonade endpoint.  
 **Symptom**: Model consistently returns `empty choices` across all retry attempts.  
 **Error Snippet**: `[model] attempt N: empty choices — retry in 4s` (4 consecutive failures)  
-**Probable Cause**: Lemonade endpoint returning no response choices or model not loaded properly.  
-**Quick Fix**: Verify Lemonade endpoint `http://localhost:8000/api/v1` is serving Qwen3.5-4B-GGUF model; check Lemonade logs.  
-**Permanent Fix**: Re-load model or restart Lemonade service if endpoint is unresponsive.  
-**Prevention**: Add pre-flight health check to runner.py before attempting model calls.  
-**Recurrence**: false
+**Root Cause (final)**: Two stacked bugs:
+  1. `max_tokens: 512` was the output cap — decompose prompt consumed full context window, leaving 0 tokens for output.
+  2. `decompose_budget` missing from config — runner used `max_tokens` value (512) as input budget instead of 80% of context (6553).
+  3. Qwen3.5-4B-GGUF downloaded but not loaded in Lemonade at time of run — CURL error on `/chat/completions` confirmed.
+**Quick Fix**: Switch model to Qwen3.5-35B-A3B-GGUF (confirmed loaded). Update settings.yaml model.id.  
+**Permanent Fix**: commit `58081217` — raised max_tokens to 1024, added decompose_budget: 6553, timeout 120s. Pre-flight should verify model is loaded (not just downloaded) before runner starts.  
+**Prevention**: Add `/chat/completions` health check to pre_flight.py — probe with `max_tokens: 1` to confirm model actually generates, not just lists. Add `decompose_budget` as required key in settings schema.  
+**Recurrence**: false — root causes patched.
 
 ---
 
 ### TS-20260406-002: Ticket TASK-014 Decomposition Failure
 
+**Status**: RESOLVED ✅ 2026-04-07 (child of TS-20260406-001)  
 **Context**: Ticket TASK-014 failed during goal decomposition phase.  
 **Symptom**: Decomposition produced no tickets — abort.  
 **Error Snippet**: `[runner] decompose failed: model call failed after 4 attempts`  
-**Probable Cause**: Model endpoint `http://localhost:8000/api/v1` returned empty choices.  
-**Quick Fix**: Verify Lemonade service is running and model Qwen3.5-4B-GGUF is loaded.  
-**Permanent Fix**: Restart Lemonade service and reload model configuration.  
-**Prevention**: Implement endpoint health check before decompose phase.  
-**Recurrence**: true (see TS-20260406-001)
+**Probable Cause**: Model endpoint returned empty choices (see TS-20260406-001).  
+**Quick Fix**: Fix parent issue TS-20260406-001.  
+**Permanent Fix**: Same as TS-20260406-001.  
+**Prevention**: Same as TS-20260406-001.  
+**Recurrence**: false
+
+---
+
+### TS-20260407-001: POC First Successful End-to-End Run
+
+**Status**: MILESTONE ✅  
+**Timestamp**: 2026-04-07 ~05:20 EDT  
+**Context**: First complete goal → decompose → execute → verify run on ZBook hardware.  
+**Goal**: `write a python script that generates the first 20 fibonacci numbers and saves them to output/fib.txt, then verify the file was written`  
+**Model**: Qwen3.5-35B-A3B-GGUF (35B MoE, ctx_size: 64000)  
+**Result**: 8 tickets decomposed and closed, all PASS.
+**Performance**:
+  - Decompose: 609 tokens, 10.43s
+  - Fastest task: TASK-017, 1.66s @ 121.7 tok/s
+  - Slowest task: TASK-015, 7.75s @ 54.7 tok/s
+  - RAM stable: ~98.6 GB / 127 GB
+**Notable**: Agent self-corrected model selection — probed 4B, got CURL error, switched to 35B autonomously.
+**Follow-up**: budget=256 on TASKS 018-020 indicates runner budget inheritance not reading decompose_budget from updated config — audit runner.py token budget logic.

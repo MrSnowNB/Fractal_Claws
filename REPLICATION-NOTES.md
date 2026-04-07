@@ -1,7 +1,7 @@
 ---
 title: REPLICATION-NOTES.md
-version: "2.0"
-last_updated: "2026-04-06"
+version: "3.0"
+last_updated: "2026-04-07"
 ---
 
 # REPLICATION-NOTES.md
@@ -15,27 +15,36 @@ last_updated: "2026-04-06"
 | Python | 3.10 (64-bit) |
 | Lemonade endpoint | http://localhost:8000/api/v1 |
 | API key | x |
-| Git branch | poc/child-agent |
+| Git branch | main |
 
 **NOT a Z8. Do not use Z8 ports, specs, or model sizes.**
 
-## Model
+## Active Models (as of 2026-04-07)
 
-| Field | Value |
-|-------|-------|
-| Model ID | Qwen3.5-4B-GGUF |
-| RAM used | ~27 GB |
-| Gen tok/s | ~40.9 |
-| TTFT | ~0.96s |
-| Context window | 8,192 tokens |
-
-All other model slots (35B, Hermes, LFM2.5, Qwen3-Coder-Next) are NOT active.
+| Model ID | Size | ctx_size | Status | Role |
+|----------|------|----------|--------|------|
+| Qwen3.5-35B-A3B-GGUF | 19.7 GB | 64,000 | ✅ Loaded | Primary (decompose + execute) |
+| Qwen3-Coder-Next-GGUF | 43.7 GB | 64,000 | Downloaded | Heavy coding tasks |
+| Qwen3.5-4B-GGUF | 2.91 GB | default | Downloaded (not loaded) | Lightweight tasks |
+| Whisper-Base | 0.14 GB | — | Loaded | Audio/transcription |
+| kokoro-v1 | 0.34 GB | — | Loaded | TTS |
+| lfm2.5-it-1.2b-FLM | 0.96 GB | — | Loaded | Tiny health checks |
+| user.Hermes-3-Llama-3.1-8B-GGUF | — | — | Downloaded | Reserved |
 
 ## Session Startup
 
 ```powershell
+# 1. Verify Lemonade is running and models loaded
 curl http://localhost:8000/api/v1/models
+
+# 2. Confirm chat completions work (not just model list)
+python -c "import requests; r = requests.post('http://localhost:8000/api/v1/chat/completions', json={'model': 'Qwen3.5-35B-A3B-GGUF', 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 10}); print(r.status_code, r.text[:100])"
+
+# 3. Run pre-flight
 python pre_flight.py
+
+# 4. Run agent
+python agent/runner.py --goal "<your goal here>"
 ```
 
 ## Known Issues
@@ -46,6 +55,7 @@ python pre_flight.py
 | H-API-005 | 2026-04-06 | Model unloads on idle timeout | Keep Lemonade active |
 | H-SCOPE-001 | 2026-04-06 | Agent self-installed fastmcp | Forbidden in .clinerules |
 | H-CONFLICT-001 | 2026-04-06 | Merge conflict in pre_flight.py | Fixed |
+| ISS-20260406-001 | 2026-04-06 | Empty choices / 4B not loaded | RESOLVED 2026-04-07 |
 
 ## Environment Deltas
 
@@ -56,14 +66,26 @@ python pre_flight.py
 | 2026-04-06 | Removed fastmcp 3.1.0 |
 | 2026-04-06 | Fixed pre_flight.py merge conflict |
 | 2026-04-06 | All configs locked to ZBook / Lemonade :8000 |
-| 2026-04-06 | Runner 4B model consistently returns empty choices — Lemonade endpoint issue |
+| 2026-04-06 | Runner 4B empty choices — Lemonade endpoint issue |
+| 2026-04-07 | settings.yaml: max_tokens 512→1024, decompose_budget: 6553 added, timeout 90→120s |
+| 2026-04-07 | Active model switched to Qwen3.5-35B-A3B-GGUF (4B not loaded in Lemonade) |
+| 2026-04-07 | **MILESTONE**: First full end-to-end POC run complete — fib.txt generated, 8 tickets PASS |
 
 ## POC Success Criteria
 
-- [ ] python pre_flight.py exits 0
-- [ ] child_agent.py completes ticket end-to-end
-- [ ] Child reads context, writes result, closes ticket
+- [x] python pre_flight.py exits 0
+- [x] runner.py completes ticket end-to-end
+- [x] Agent reads context, writes result, closes ticket
 - [ ] pytest -q tests/ passes
 - [ ] ruff check src/ clean
-| TS-20260406-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-06 20:22:19 |
-| TS-20260406-TASK-005 | Ticket TASK-005 | Test failure... | 2026-04-06 20:24:08 |
+
+## Performance Baseline (2026-04-07, Qwen3.5-35B-A3B-GGUF)
+
+| Metric | Value |
+|--------|-------|
+| Decompose tokens | 609 |
+| Decompose time | 10.43s |
+| Peak tok/s | 126.8 (TASK-014) |
+| Min tok/s | 54.7 (TASK-015) |
+| RAM used | ~98.6 GB / 127 GB |
+| All tickets | 8/8 PASS |
