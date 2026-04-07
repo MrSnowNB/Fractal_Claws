@@ -1,6 +1,6 @@
 ---
 title: CLAUDE.md — Fractal Claws POC
-version: "2.1"
+version: "3.0"
 scope: single-parent / single-child ticket harness
 ---
 
@@ -13,14 +13,30 @@ scope: single-parent / single-child ticket harness
 ## What This Harness Is
 
 A **model-agnostic coding harness** where:
-- Cline (in VS Code) is the **parent** — it reads tickets, writes code, calls tools
-- `agent/runner.py` is the **child harness** — it receives a ticket, uses read/write/exec tools, writes a result, exits
-- The ticket YAML is the **only** contract between parent and child
-- Success = child completes a ticket loop end-to-end and writes a result file
+- **Cline (in VS Code) is the parent** — it reads tickets, writes code, calls tools
+- **`agent/runner.py` is the child harness** — it receives a ticket, uses read/write/exec tools, writes a result, exits
+- The **ticket YAML is the only contract** between parent and child
+- **Success** = child completes a ticket loop end-to-end and writes a result file
 
-The model and endpoint are defined in `settings.yaml`. This file contains no model names.
+The model and endpoint are defined in `settings.yaml`. This file contains **no model names**.
 
-**One harness. Two roles. No model switching. No swarms.**
+**One harness. Two roles. No model switching mid-session. No swarms.**
+
+---
+
+## Harness Architecture
+
+```
+Cline (parent, ~80B Coder-Next)
+  └── spawns runner.py
+        └── child calls Lemonade endpoint → A3B model (executor)
+              └── completes ticket → writes result → closes ticket
+```
+
+- Parent orchestrates: reads task, writes ticket YAML, invokes runner, reads result, runs gates
+- Child executes: reads ticket, calls tools, writes result, moves ticket to closed/failed
+- **Child model = whatever `settings.yaml model.id` resolves to** (currently A3B)
+- **4B model: DEPRECATED** — deferred to future integration phase. Do not use in active sessions.
 
 ---
 
@@ -29,7 +45,7 @@ The model and endpoint are defined in `settings.yaml`. This file contains no mod
 See `settings.yaml`:
 ```yaml
 model:
-  id: <your-model-id>
+  id: <your-model-id>    # child executor — set to A3B for current test phase
   endpoint: <your-openai-compat-endpoint>
 ```
 
@@ -105,7 +121,7 @@ All four must be green before any task is "done":
 
 ## Session Startup Checklist
 
-```bash
+```powershell
 python pre_flight.py
 ```
 
@@ -120,3 +136,4 @@ If any check fails — fix it before accepting any task.
 3. Never spawn more than one child per ticket.
 4. Never write to `tickets/closed/` directly — runner does that.
 5. Context at 80%: write `CHECKPOINT.md`, halt, alert human.
+6. **Do not attempt to load, test, or reference Qwen3.5-4B-GGUF** — it is deprecated for this phase.
