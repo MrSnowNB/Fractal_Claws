@@ -9,12 +9,13 @@ Usage:
     python agent/runner.py                        # drain all open tickets
     python agent/runner.py --goal "<goal>"        # decompose goal then drain
     python agent/runner.py --once                 # dispatch one ticket then exit
+    python agent/runner.py --no-prewarm           # skip model pre-warm (fast start)
 
 Budget policy (v3):
     BUDGET_CEILING = context_window * 0.8   (80% of ctx — matches AGENT-POLICY.md)
     BUDGET_FLOOR   = 256                    (minimum output tokens)
-    max_tokens in settings.yaml = output token CAP (separate from input budget)
-    decompose_budget in settings.yaml = output tokens for decompose phase
+    max_tokens in settings.yaml = output token CAP (doc-only; runner uses dynamic budget)
+    decompose_budget in settings.yaml = INPUT context reserved for decompose phase
     Both fall back to 80% of context_window if not set.
 """
 
@@ -48,7 +49,7 @@ RETRY_DELAY  = 4
 
 OPEN_DIR     = CFG["tickets"]["open_dir"]
 CLOSED_DIR   = CFG["tickets"]["closed_dir"]
-FAIL_DIR     = "tickets/failed"
+FAIL_DIR     = CFG["tickets"].get("failed_dir", "tickets/failed")
 IN_PROG_DIR  = CFG["tickets"].get("in_progress_dir", "tickets/in_progress")
 EXEC_SANDBOX = "output"
 LOG_DIR      = CFG["logging"]["dir"].rstrip("/")
@@ -63,8 +64,8 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 # Single unified policy: 80% of context window.
 # BUDGET_CEILING is the max output tokens we will ever request.
 # BUDGET_FLOOR is the minimum — prevents degenerate tiny budgets on short tasks.
-# max_tokens in settings.yaml is the HARD OUTPUT CAP (what the server enforces).
-# decompose_budget in settings.yaml is the output token ask for decompose phase.
+# max_tokens in settings.yaml is the HARD OUTPUT CAP (doc-only at runtime).
+# decompose_budget in settings.yaml is the INPUT context reserved for decompose phase.
 # Both fall back to 80% of context_window if not explicitly set.
 
 CONTEXT_WINDOW  = int(CFG["model"].get("context_window", 8192))
@@ -78,10 +79,13 @@ def token_budget(ticket: dict) -> int:
     """Return the output token budget for a single ticket.
     Scales with task complexity but is bounded by BUDGET_FLOOR / BUDGET_CEILING.
     If the ticket overrides max_tokens directly, that value wins.
+
+    Multiplier is * 8 (up from * 4) to give code-generation tasks sufficient
+    headroom — most tasks involve writing + executing code, not just short answers.
     """
     task_words = len(str(ticket.get("task", "")).split())
-    # estimate: task complexity * 4 (reasonable for code generation)
-    estimate   = int(task_words / WORDS_PER_TOKEN * 4)
+    # estimate: task complexity * 8 (reasonable for code generation)
+    estimate   = int(task_words / WORDS_PER_TOKEN * 8)
     budget     = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
     max_tok    = ticket.get("max_tokens")
     return int(max_tok) if max_tok is not None else budget
@@ -483,10 +487,15 @@ def decompose_goal(goal: str, first_n: int) -> list:
          )},
     ]
 
-    # Use configured decompose_budget if present; fallback to 80% of context_window
+    # Use configured decompose_budget if present; fallback to 80% of context_window.
+    # NOTE: decompose_budget is an INPUT context reservation — the actual output
+    # token request for decompose is capped at BUDGET_CEILING.
     decompose_budget = CFG["model"].get("decompose_budget")
     if decompose_budget is None:
         decompose_budget = BUDGET_CEILING  # 80% of ctx
+
+    # Clamp to BUDGET_CEILING so we never request more output tokens than the ceiling
+    decompose_budget = min(int(decompose_budget), BUDGET_CEILING)
 
     try:
         raw, tokens, finish, elapsed = call_model(messages, budget=decompose_budget)
@@ -612,9 +621,11 @@ def prewarm() -> None:
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    once = "--once" in sys.argv
+    once      = "--once"      in sys.argv
+    no_prewarm = "--no-prewarm" in sys.argv
 
-    prewarm()
+    if not no_prewarm:
+        prewarm()
 
     goal = None
     for i, arg in enumerate(sys.argv):

@@ -9,7 +9,12 @@
 #
 # Budget policy:
 #   max_tokens        = output token CAP (server-enforced hard limit)
-#   decompose_budget  = output tokens allocated to decompose phase
+#                       NOTE: runner.py computes dynamic budgets at runtime via
+#                       token_budget(); this field is documentation-only and is
+#                       NOT passed to the OpenAI client directly.
+#   decompose_budget  = INPUT context tokens reserved for the decompose phase
+#                       (i.e. how much of the context window the decompose prompt
+#                       may consume). This is NOT an output token request.
 #   output_budget_pct = fraction of context_window used as BUDGET_CEILING in runner
 #   All three must be consistent: decompose_budget <= context_window * output_budget_pct
 
@@ -19,8 +24,8 @@ model:
   format: openai-compat
   api_key: x
   temperature: 0.2
-  max_tokens: 512                  # output token hard CAP (server enforces this)
-  decompose_budget: 51200          # 80% of 64000 — output tokens for decompose
+  max_tokens: 512                  # output token hard CAP (doc-only — runner uses dynamic budget)
+  decompose_budget: 51200          # 80% of 64000 — INPUT context reserved for decompose phase
   output_budget_pct: 0.8           # 80% of context_window = BUDGET_CEILING in runner
   context_window: 64000            # A3B actual context window
   timeout_seconds: 180
@@ -41,6 +46,7 @@ tickets:
   open_dir: tickets/open
   in_progress_dir: tickets/in_progress
   closed_dir: tickets/closed
+  failed_dir: tickets/failed
   template: tickets/template.yaml
   max_open: 5
   decrement_default: 3
