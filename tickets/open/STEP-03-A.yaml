@@ -1,0 +1,63 @@
+ticket_id: STEP-03-A
+title: "Wire ToolRegistry into parse_and_run_tools() in runner.py"
+step: STEP-03
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-07"
+updated_at: "2026-04-07"
+result_path: logs/STEP-03-A-result.txt
+depends_on: []
+allowed_tools: [read_file, write_file]
+context_files:
+  - agent/runner.py
+  - tools/registry.py
+  - tools/terminal.py
+  - AI-FIRST/STEP-03-RUNNER-WIRING.md
+task: >
+  Read agent/runner.py and AI-FIRST/STEP-03-RUNNER-WIRING.md in full.
+  Then refactor agent/runner.py as follows:
+
+  1. Add imports at the top of runner.py:
+     from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
+     from tools.terminal import run_command
+
+  2. Instantiate a module-level REGISTRY = ToolRegistry() singleton immediately
+     after the imports.
+
+  3. Register all five tools on REGISTRY at module level (not inside any function):
+     REGISTRY.register("read_file",   tool_read_file,   {"path": str})
+     REGISTRY.register("write_file",  tool_write_file,  {"path": str, "content": str})
+     REGISTRY.register("list_dir",    tool_list_dir,    {"path": str})
+     REGISTRY.register("exec_python", tool_exec_python, {"path": str})
+     REGISTRY.register("run_command", run_command,      {"cmd": list})
+
+  4. In parse_and_run_tools(), replace the if/elif/else dispatch block with:
+     try:
+         if tool == "write_file":
+             result = REGISTRY.call(tool, {"path": path, "content": content or ""})
+         elif tool == "run_command":
+             result = REGISTRY.call(tool, {"cmd": path.split()})
+         else:
+             result = REGISTRY.call(tool, {"path": path})
+     except (ToolNotFoundError, ToolArgError) as e:
+         result = f"ERROR: {e}"
+
+  5. Also add Phase A ticket_io migration in execute_ticket():
+     Add these two lines after the existing `ticket = load_ticket(ticket_path)` call:
+         from src.ticket_io import Ticket
+         ticket_id = ticket.get("ticket_id", Path(ticket_path).stem)
+         depth = int(ticket.get("depth", 0))
+     (These already exist — no change needed for Phase A. Just confirm they are present.)
+     The Phase A migration here only requires the imports and REGISTRY wiring above;
+     full typed field access is Step 5.
+
+  Write the updated runner.py back to agent/runner.py.
+  Do NOT change any other logic — token budget, drain loop, model call, etc. are untouched.
+rationale: >
+  Replaces brittle hardcoded dispatch with dynamic registry. Enables run_command
+  as a first-class tool without parser changes. Unlocks CLI tools (nmap, git, gpg, etc)
+  as callable ticket actions.
+produces: [agent/runner.py]
+consumes: [tools/registry.py, tools/terminal.py]
+tags: [registry, dispatch, refactor, runner, phase-a]

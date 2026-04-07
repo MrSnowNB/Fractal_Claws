@@ -1,0 +1,83 @@
+ticket_id: STEP-03-B
+title: "Write tests/test_runner_dispatch.py — 11 dispatch and ticket_io tests"
+step: STEP-03
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-07"
+updated_at: "2026-04-07"
+result_path: logs/STEP-03-B-result.txt
+depends_on: [STEP-03-A]
+allowed_tools: [read_file, write_file]
+context_files:
+  - agent/runner.py
+  - tools/registry.py
+  - tools/terminal.py
+  - tests/test_tools.py
+  - AI-FIRST/STEP-03-RUNNER-WIRING.md
+task: >
+  Read agent/runner.py, tools/registry.py, tools/terminal.py, tests/test_tools.py,
+  and AI-FIRST/STEP-03-RUNNER-WIRING.md.
+
+  Write tests/test_runner_dispatch.py containing at minimum these 11 tests:
+
+  1. test_registry_registered_tools:
+     Import REGISTRY from agent.runner. Assert all five tool names are registered:
+     read_file, write_file, list_dir, exec_python, run_command.
+
+  2. test_dispatch_read_file:
+     Write a temp file. Call REGISTRY.call("read_file", {"path": tmp_path}).
+     Assert returned content matches what was written.
+
+  3. test_dispatch_write_file:
+     Call REGISTRY.call("write_file", {"path": tmp_path, "content": "hello"}).
+     Assert file exists and contains "hello".
+
+  4. test_dispatch_list_dir:
+     Create a temp dir with one file. Call REGISTRY.call("list_dir", {"path": tmp_dir}).
+     Assert filename appears in result.
+
+  5. test_dispatch_exec_python:
+     Write a trivial Python script to output/test_dispatch.py that prints "dispatch_ok".
+     Call REGISTRY.call("exec_python", {"path": "output/test_dispatch.py"}).
+     Assert "dispatch_ok" in result.
+
+  6. test_dispatch_run_command:
+     Call REGISTRY.call("run_command", {"cmd": ["echo", "registry_ok"]}).
+     Assert "registry_ok" in result.
+
+  7. test_dispatch_unknown_tool:
+     Call REGISTRY.call("nonexistent_tool", {"path": "/"}).
+     Expect ToolNotFoundError to be raised.
+
+  8. test_parse_and_run_tools_write_then_exec:
+     Build a synthetic response string with two tool blocks:
+       TOOL: write_file / PATH: output/dispatch_test.py / CONTENT: print(42) / END
+       TOOL: exec_python / PATH: output/dispatch_test.py / END
+     Call parse_and_run_tools(response). Assert results list has 2 entries.
+     Assert second result contains "42".
+
+  9. test_parse_and_run_tools_unknown_tool_returns_error:
+     Build response with TOOL: bogus_tool PATH: /tmp/x END.
+     Call parse_and_run_tools(). Assert result contains "ERROR:".
+
+  10. test_typed_ticket_load (using a tmp YAML):
+      Write a minimal ticket YAML to a temp file with ticket_id: STEP-TEST-001.
+      Import load_ticket from agent.runner (the existing function).
+      Assert ticket["ticket_id"] == "STEP-TEST-001".
+      (Full typed load is Step 5; this verifies dict access still works after wiring.)
+
+  11. test_run_command_via_parse_and_run_tools:
+      Build a response with TOOL: run_command PATH: echo hello END.
+      Call parse_and_run_tools(). Assert result contains "hello".
+
+  Platform notes:
+  - Use sys.platform to guard run_command tests: on Windows use ["cmd", "/c", "echo", "ok"].
+  - All temp files: use tmp_path fixture (pytest). Clean up after each test.
+  - output/ dir must exist before exec_python tests: os.makedirs("output", exist_ok=True).
+rationale: >
+  Validates the registry wiring end-to-end. Verifies parse_and_run_tools() now routes
+  through REGISTRY correctly and unknown tools return ERROR strings instead of crashing.
+produces: [tests/test_runner_dispatch.py]
+consumes: [agent/runner.py, tools/registry.py, tools/terminal.py]
+tags: [tests, dispatch, registry, runner, validation]

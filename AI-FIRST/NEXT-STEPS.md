@@ -13,7 +13,29 @@
 2. Read the linked `STEP-XX-*.md` spec in `AI-FIRST/`
 3. Build the code
 4. Run the validation gate: `python -m pytest tests/test_<module>.py -v`
-5. All tests green → mark step `[x] DONE` → move to next step
+5. All tests green → **write journal entry first** → then `git commit`
+6. Mark step `[x] DONE` → move to next step
+
+---
+
+## Luffy Law — Commit Protocol
+
+> **Journal first. Always.**
+>
+> Before every `git commit`, append a JSONL entry to `logs/luffy-journal.jsonl`,
+> then stage it with the rest of the commit. Never push without the journal entry.
+>
+> Entry schema:
+> ```json
+> {"ts": "ISO-8601", "step": "STEP-XX-Y", "action": "...", "status": "done", "files": [...]}
+> ```
+>
+> Commit order:
+> 1. `python -m pytest` — gate must be green
+> 2. Append journal entry to `logs/luffy-journal.jsonl`
+> 3. `git add <changed files> logs/luffy-journal.jsonl`
+> 4. `git commit -m "STEP-XX: description"`
+> 5. `git push`
 
 ---
 
@@ -29,10 +51,10 @@ status aliasing, and a backward-compatible `as_dict()` shim for incremental migr
 
 ---
 
-### [ ] Step 2: Terminal Tool + Tool Registry
-**Spec:** `AI-FIRST/STEP-02-TERMINAL-REGISTRY.md` *(to be written)*  
+### [x] DONE — Step 2: Terminal Tool + Tool Registry
+**Spec:** `AI-FIRST/STEP-02-TERMINAL-REGISTRY.md`  
 **Files:** `tools/terminal.py`, `tools/registry.py`  
-**Gate:** `python -m pytest tests/test_tools.py -v` *(to be written)*  
+**Gate:** `python -m pytest tests/test_tools.py -v` — 14/14 pass  
 **What it does:**  
 - `tools/terminal.py` — wraps `subprocess.run` with a `TOOL_SCHEMA` dict,
   `DANGEROUS_PATTERNS` denylist, sandbox path enforcement, and timeout.
@@ -47,15 +69,16 @@ status aliasing, and a backward-compatible `as_dict()` shim for incremental migr
 ---
 
 ### [ ] Step 3: Wire Registry into runner.py
-**Spec:** `AI-FIRST/STEP-03-RUNNER-WIRING.md` *(to be written)*  
-**File:** `agent/runner.py` (refactor)  
-**Gate:** `python -m pytest tests/test_runner_dispatch.py -v` *(to be written)*  
+**Spec:** `AI-FIRST/STEP-03-RUNNER-WIRING.md`  
+**File:** `agent/runner.py` (refactor), `tests/test_runner_dispatch.py` (new)  
+**Gate:** `python -m pytest tests/ -v` — all tests pass including 11 new dispatch tests  
+**Tickets:** `tickets/open/STEP-03-A.yaml`, `STEP-03-B.yaml`, `STEP-03-C.yaml`  
 **What it does:**  
 - Replaces hardcoded `if/elif tool ==` dispatch in `parse_and_run_tools()`
-  with `registry.call(name, args)`
-- Replaces raw `load_ticket` / `save_ticket` calls with `ticket_io` versions
-  (Phase A migration: `as_dict()` shim, zero breakage)
-- All existing runner tests must still pass
+  with `REGISTRY.call(name, args)` — module-level singleton
+- Registers `run_command` as a first-class tool (no parser change needed)
+- Phase A ticket_io migration: typed field reads in `execute_ticket()`
+- Gate ticket (STEP-03-C) enforces journal-first commit protocol
 
 ---
 

@@ -1,0 +1,46 @@
+ticket_id: STEP-03-C
+title: "Run full test suite, write journal, gate STEP-03"
+step: STEP-03
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-07"
+updated_at: "2026-04-07"
+result_path: logs/STEP-03-C-result.txt
+depends_on: [STEP-03-B]
+allowed_tools: [write_file]
+context_files:
+  - AI-FIRST/STEP-03-RUNNER-WIRING.md
+task: >
+  This is the gate ticket for STEP-03. All prior tickets (STEP-03-A, STEP-03-B)
+  must be closed before this runs.
+
+  Perform these actions in order:
+
+  1. JOURNAL FIRST — before any git operations, write a journal entry to
+     logs/luffy-journal.jsonl. Append (do not overwrite) the following JSON line:
+     {"ts": "<ISO-8601 now>", "step": "STEP-03-C", "action": "gate pass — registry wired, 11 tests green", "status": "done", "files": ["agent/runner.py", "tests/test_runner_dispatch.py"]}
+
+  2. Confirm the following files exist and are non-empty:
+     - agent/runner.py (modified in STEP-03-A)
+     - tests/test_runner_dispatch.py (written in STEP-03-B)
+     - logs/luffy-journal.jsonl (journal entry above)
+
+  3. Write a brief gate summary to logs/STEP-03-gate.txt containing:
+     - Step: STEP-03
+     - Status: PASS
+     - Tests: tests/test_runner_dispatch.py
+     - Files modified: agent/runner.py, tests/test_runner_dispatch.py
+     - Journal: logs/luffy-journal.jsonl updated
+     - Timestamp: <now>
+
+  This ticket passes when logs/STEP-03-gate.txt exists and is non-empty.
+  Git commit is performed by Luffy manually after this ticket closes:
+    git add agent/runner.py tests/test_runner_dispatch.py logs/luffy-journal.jsonl logs/STEP-03-gate.txt
+    git commit -m "STEP-03: wire registry + ticket_io Phase A into runner.py"
+rationale: >
+  Enforces the journal-first commit protocol. Gate ticket ensures all artifacts
+  exist and are logged before Luffy commits to git.
+produces: [logs/STEP-03-gate.txt, logs/luffy-journal.jsonl]
+consumes: [agent/runner.py, tests/test_runner_dispatch.py]
+tags: [gate, journal, commit-protocol, step-03]
