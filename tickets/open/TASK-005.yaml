@@ -1,0 +1,52 @@
+ticket_id: TASK-005
+title: "Read output/fib.py and verify sequence correctness"
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-07"
+updated_at: "2026-04-07"
+agent: Qwen3.5-35B-A3B-GGUF
+depends_on: [TASK-004]
+allowed_tools: [read_file, write_file, exec_python]
+result_path: logs/TASK-005-result.txt
+context_files: []
+
+tags:
+  - fibonacci
+  - verification
+  - read-and-validate
+  - dependency-test
+  - graphify-ready
+
+produces:
+  - output/fib_verify.py
+  - stdout:verification-result
+
+consumes:
+  - output/fib.py
+  - stdout:fibonacci-10
+
+rationale: >
+  This task validates the end-to-end dependency resolution in the runner.
+  It depends on TASK-004 having successfully written and executed output/fib.py.
+  It reads the source file, writes a verification script to output/fib_verify.py
+  that imports and checks the sequence, and executes it. If TASK-004 failed,
+  the runner should now correctly report 'UPSTREAM FAILED' rather than 'deadlock',
+  which is the primary behavioral fix being tested in this run (v4 drain diagnostics).
+  Successful completion of both tasks proves: budget floor fix, path auto-sandbox,
+  upstream context injection, and drain failure classification all work.
+
+task: >
+  TASK-004 has already written and executed output/fib.py. Your job is to verify
+  the sequence is correct by doing the following three steps in order.
+  Step 1: Use read_file with PATH output/fib.py to read the script and confirm
+  it exists and contains Fibonacci logic.
+  Step 2: Write a verification script to output/fib_verify.py that runs
+  output/fib.py via subprocess, captures stdout, splits by newline, strips
+  whitespace, and asserts the resulting list equals
+  ['0','1','1','2','3','5','8','13','21','34']. The script should print
+  'VERIFIED: sequence correct' on success or raise AssertionError with the
+  actual output on failure.
+  Step 3: Execute output/fib_verify.py using exec_python with PATH
+  output/fib_verify.py. Success requires returncode 0 and stdout containing
+  'VERIFIED: sequence correct'. All file paths must use the output/ prefix.

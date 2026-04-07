@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-runner.py — Fractal Claws agent skeleton v3
+runner.py — Fractal Claws agent skeleton v4
 
 Single entry point. Reads all config from settings.yaml.
 No model names, no depths, no tiers hardcoded here.
@@ -11,12 +11,12 @@ Usage:
     python agent/runner.py --once                 # dispatch one ticket then exit
     python agent/runner.py --no-prewarm           # skip model pre-warm (fast start)
 
-Budget policy (v3):
+Budget policy (v4 — thinking-model aware):
+    BUDGET_FLOOR   = 1024                   (minimum for thinking + tool block)
     BUDGET_CEILING = context_window * 0.8   (80% of ctx — matches AGENT-POLICY.md)
-    BUDGET_FLOOR   = 256                    (minimum output tokens)
-    max_tokens in settings.yaml = output token CAP (doc-only; runner uses dynamic budget)
-    decompose_budget in settings.yaml = INPUT context reserved for decompose phase
-    Both fall back to 80% of context_window if not set.
+    token_budget() multiplier = *24         (thinking models need 3x headroom vs *8)
+    max_tokens in settings.yaml = hard output CAP (doc-only; runner uses dynamic budget)
+    decompose_budget in settings.yaml = output tokens for decompose YAML (not input ctx)
 """
 
 import os
@@ -61,17 +61,21 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
 
 # ── token budget ──────────────────────────────────────────────────────────────
-# Single unified policy: 80% of context window.
-# BUDGET_CEILING is the max output tokens we will ever request.
-# BUDGET_FLOOR is the minimum — prevents degenerate tiny budgets on short tasks.
-# max_tokens in settings.yaml is the HARD OUTPUT CAP (doc-only at runtime).
-# decompose_budget in settings.yaml is the INPUT context reserved for decompose phase.
-# Both fall back to 80% of context_window if not explicitly set.
+# v4 policy — thinking-model aware:
+#   BUDGET_FLOOR   = 1024  (was 256 — minimum for reasoning pass + tool block)
+#   BUDGET_CEILING = context_window * output_budget_pct  (unchanged, 80%)
+#   multiplier     = *24   (was *8 — thinking models burn 300-600 tok before output)
+#
+# Why *24:
+#   task_words=15 → estimate = int(15/0.75*24) = 480 → clamped to BUDGET_FLOOR=1024
+#   task_words=50 → estimate = int(50/0.75*24) = 1600 → passes through
+#   task_words=200 → estimate = int(200/0.75*24) = 6400 → clamped to BUDGET_CEILING
+# This ensures even terse task descriptions get enough room for a thinking pass.
 
 CONTEXT_WINDOW  = int(CFG["model"].get("context_window", 8192))
 BUDGET_PCT      = float(CFG["model"].get("output_budget_pct", 0.8))
-BUDGET_CEILING  = int(CONTEXT_WINDOW * BUDGET_PCT)   # 80% of ctx by default
-BUDGET_FLOOR    = 256                                  # minimum useful output
+BUDGET_CEILING  = int(CONTEXT_WINDOW * BUDGET_PCT)
+BUDGET_FLOOR    = 1024   # v4: raised from 256 — thinking model minimum
 
 WORDS_PER_TOKEN = 0.75
 
@@ -80,12 +84,12 @@ def token_budget(ticket: dict) -> int:
     Scales with task complexity but is bounded by BUDGET_FLOOR / BUDGET_CEILING.
     If the ticket overrides max_tokens directly, that value wins.
 
-    Multiplier is * 8 (up from * 4) to give code-generation tasks sufficient
-    headroom — most tasks involve writing + executing code, not just short answers.
+    Multiplier is *24 (up from *8) to give thinking models sufficient headroom.
+    Qwen3.5-35B-A3B consumes 300-600 reasoning tokens before producing tool output.
+    A floor of 1024 ensures every ticket can complete at least one full tool call.
     """
     task_words = len(str(ticket.get("task", "")).split())
-    # estimate: task complexity * 8 (reasonable for code generation)
-    estimate   = int(task_words / WORDS_PER_TOKEN * 8)
+    estimate   = int(task_words / WORDS_PER_TOKEN * 24)
     budget     = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
     max_tok    = ticket.get("max_tokens")
     return int(max_tok) if max_tok is not None else budget
@@ -137,6 +141,10 @@ def scan_open() -> list:
 
 def is_closed(ticket_id: str) -> bool:
     return os.path.exists(os.path.join(CLOSED_DIR, f"{ticket_id}.yaml"))
+
+
+def is_failed(ticket_id: str) -> bool:
+    return os.path.exists(os.path.join(FAIL_DIR, f"{ticket_id}.yaml"))
 
 
 def deps_met(ticket: dict) -> bool:
@@ -240,6 +248,13 @@ def tool_read_file(path: str) -> str:
 
 
 def tool_write_file(path: str, content: str) -> str:
+    # Auto-sandbox: bare .py filenames (no directory component) → output/
+    # This corrects a common model compliance failure where the model writes
+    # to the project root instead of output/ despite prompt instructions.
+    if path.endswith(".py") and os.path.dirname(path) == "":
+        original_path = path
+        path = os.path.join("output", path)
+        print(f"  [tool] auto-sandbox: {original_path} → {path}")
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -383,7 +398,7 @@ def execute_ticket(ticket_path: str) -> bool:
     except RuntimeError as e:
         print(f"  [runner] model call failed: {e}")
         _write_result(result_path, ticket_id, "model_error", 0, str(e), elapsed=0,
-                      hw_pre=hw_pre, hw_post=hw_snap(), tool_results=[])
+                      hw_pre=hw_pre, hw_post=hw_snap(), tool_results=[], raw_full=str(e))
         return False
 
     hw_post = hw_snap()
@@ -394,7 +409,7 @@ def execute_ticket(ticket_path: str) -> bool:
     passed, reason = _evaluate(result_path, tool_results)
 
     _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
-                  hw_pre, hw_post, tool_results, reason)
+                  hw_pre, hw_post, tool_results, reason, raw_full=raw)
 
     if passed:
         ticket["status"]     = "closed"
@@ -423,7 +438,8 @@ def _evaluate(result_path: str, tool_results: list) -> tuple:
 
 
 def _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
-                  hw_pre, hw_post, tool_results, reason="ok"):
+                  hw_pre, hw_post, tool_results, reason="ok", raw_full=None):
+    """Write full result log. raw_full is the complete untruncated model response."""
     os.makedirs(os.path.dirname(result_path) if os.path.dirname(result_path) else ".",
                 exist_ok=True)
     lines = [
@@ -446,28 +462,60 @@ def _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
         for tool, path, result in tool_results:
             lines += [f"[{tool}] {path}", result, ""]
     else:
-        lines += ["no tool calls detected", "", "=== raw ===", raw]
+        lines += ["no tool calls detected", ""]
+    # Always write the complete raw model response — no truncation.
+    # This is disk-only cost and provides full debugging fidelity.
+    lines += [
+        "=== raw model response (complete) ===",
+        raw_full if raw_full is not None else raw,
+    ]
     with open(result_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
 
 # ── decompose ─────────────────────────────────────────────────────────────────
 
-DECOMPOSE_SYSTEM = """You are a task decomposer. Output ONLY YAML tickets in a YAML list format.
+DECOMPOSE_SYSTEM = """You are a task decomposer for an agentic coding system. Output ONLY YAML tickets in a YAML list format.
 
-Rules:
-- Each ticket: 1-2 tool calls. Tools: write_file, exec_python, read_file, list_dir.
-- exec_python paths inside output/. write_file before exec_python on same path.
-- Use depends_on for dependencies.
+CRITICAL PATH RULES (violations cause exec_python to be blocked by the sandbox):
+- exec_python: path MUST begin with 'output/' — NEVER a bare filename like 'fib.py'
+- write_file: when paired with exec_python, use 'output/<name>.py' for BOTH the write and exec paths
+- Example correct pair: write_file PATH=output/solution.py then exec_python PATH=output/solution.py
+- Example WRONG: write_file PATH=solution.py (bare filename — will be auto-corrected but exec still fails)
+
+TICKET VERBOSITY RULES (required for Graphify knowledge graph integration):
+- task: describe the COMPLETE intent — what to write, exactly where (output/ for .py),
+  what to verify, what the expected output/artifact is, and why this task exists
+  in the workflow. Be explicit about the tool sequence. Minimum 3 sentences.
+- rationale: why this task exists in the pipeline — its role in the broader workflow
+- produces: list of file paths or contracts this task creates (e.g. [output/fib.py, stdout:fibonacci-sequence])
+- consumes: list of artifacts/outputs from depends_on tasks this ticket reads
+- tags: semantic labels for graph clustering (e.g. [math, fibonacci, numeric-output, verification])
+
+GENERAL RULES:
+- Each ticket: 1-3 tool calls. Tools: write_file, exec_python, read_file, list_dir.
+- Use depends_on for hard data-flow dependencies.
 - Output ONLY valid YAML list — no markdown fences, no explanation, no text before or after.
 - Start ticket IDs from TASK-XXX as specified.
 
 Output format example:
 - ticket_id: TASK-001
-  title: "Generate Fibonacci"
-  task: "Write script to generate first 20 fib numbers"
+  title: "Generate Fibonacci sequence to output/fib.py and execute"
+  task: >
+    Write a Python script to output/fib.py that prints the first 10 Fibonacci
+    numbers, one per line. The script must use a simple iterative approach.
+    Execute the script via exec_python using path output/fib.py.
+    Verify that the output contains '55' (the 10th Fibonacci number).
+    This produces the numeric sequence artifact required by downstream verification tasks.
+  rationale: >
+    Establishes the base numeric output artifact. Downstream tasks depend on
+    this stdout to validate sequence correctness.
+  produces: [output/fib.py, stdout:fibonacci-10]
+  consumes: []
+  tags: [fibonacci, numeric-output, write-and-exec, foundation]
   depends_on: []
-  allowed_tools: [write_file, exec_python]"""
+  allowed_tools: [write_file, exec_python]
+  agent: Qwen3.5-35B-A3B-GGUF"""
 
 
 def decompose_goal(goal: str, first_n: int) -> list:
@@ -487,14 +535,9 @@ def decompose_goal(goal: str, first_n: int) -> list:
          )},
     ]
 
-    # Use configured decompose_budget if present; fallback to 80% of context_window.
-    # NOTE: decompose_budget is an INPUT context reservation — the actual output
-    # token request for decompose is capped at BUDGET_CEILING.
     decompose_budget = CFG["model"].get("decompose_budget")
     if decompose_budget is None:
-        decompose_budget = BUDGET_CEILING  # 80% of ctx
-
-    # Clamp to BUDGET_CEILING so we never request more output tokens than the ceiling
+        decompose_budget = 2048
     decompose_budget = min(int(decompose_budget), BUDGET_CEILING)
 
     try:
@@ -505,7 +548,6 @@ def decompose_goal(goal: str, first_n: int) -> list:
 
     print(f"[runner] decompose: {tokens} tokens  elapsed={elapsed}s  finish={finish}")
 
-    # strip markdown fences if model wrapped output anyway
     cleaned = re.sub(r'^```[\w]*\n?', '', raw.strip(), flags=re.MULTILINE)
     cleaned = re.sub(r'```$', '', cleaned.strip())
 
@@ -532,6 +574,11 @@ def write_tickets(tickets: list) -> None:
         t.setdefault("updated_at",    time.strftime("%Y-%m-%d"))
         t.setdefault("result_path",   f"{LOG_DIR}/{tid}-result.txt")
         t.setdefault("context_files", [])
+        t.setdefault("rationale",     "")
+        t.setdefault("produces",      [])
+        t.setdefault("consumes",      [])
+        t.setdefault("tags",          [])
+        t.setdefault("agent",         MODEL)
         path = os.path.join(OPEN_DIR, f"{tid}.yaml")
         save_ticket(path, t)
         print(f"[runner] ticket → {path}")
@@ -545,6 +592,11 @@ def drain(once: bool = False) -> None:
       - no open tickets remain, OR
       - all remaining open tickets have unmet deps AND nothing was dispatched
         in the last full pass (deadlock guard).
+
+    v4: drain now distinguishes three deferred states:
+      - true deadlock: dep exists in open/ (circular or missing)
+      - failed upstream: dep exists in failed/ (upstream task exhausted retries)
+      - missing dep: dep not in open/, closed/, or failed/ (ticket was never created)
     """
     max_depth = int(CFG["tickets"].get("decrement_default", 3))
 
@@ -592,13 +644,28 @@ def drain(once: bool = False) -> None:
                 return
 
         if dispatched_this_pass == 0 and deferred:
-            print(f"[runner] deadlock — {len(deferred)} ticket(s) blocked on unmet deps:")
+            # v4: distinguish failure modes for clearer diagnostics
+            print(f"[runner] blocked — {len(deferred)} ticket(s) cannot proceed:")
             for p in deferred:
                 ticket    = load_ticket(p)
                 ticket_id = Path(p).stem
                 unmet     = [d for d in (ticket.get("depends_on") or [])
                              if not is_closed(d)]
-                print(f"  {ticket_id} waiting on {unmet}")
+                failed_deps  = [d for d in unmet if is_failed(d)]
+                missing_deps = [d for d in unmet
+                                if not is_failed(d)
+                                and not os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
+                open_deps    = [d for d in unmet
+                                if os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
+
+                if failed_deps:
+                    print(f"  {ticket_id}: UPSTREAM FAILED → {failed_deps} exhausted retries")
+                elif missing_deps:
+                    print(f"  {ticket_id}: MISSING DEP → {missing_deps} not found anywhere")
+                elif open_deps:
+                    print(f"  {ticket_id}: DEADLOCK → circular dep on open tickets {open_deps}")
+                else:
+                    print(f"  {ticket_id}: waiting on {unmet}")
             break
 
 

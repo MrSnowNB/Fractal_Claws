@@ -7,16 +7,20 @@
 # 4B MODEL STATUS: DEPRECATED — deferred to future integration phase.
 # Do NOT reference Qwen3.5-4B-GGUF anywhere in active code or docs.
 #
-# Budget policy:
-#   max_tokens        = output token CAP (server-enforced hard limit)
-#                       NOTE: runner.py computes dynamic budgets at runtime via
-#                       token_budget(); this field is documentation-only and is
-#                       NOT passed to the OpenAI client directly.
-#   decompose_budget  = INPUT context tokens reserved for the decompose phase
-#                       (i.e. how much of the context window the decompose prompt
-#                       may consume). This is NOT an output token request.
+# Budget policy (v4 — thinking-model aware):
+#   BUDGET_FLOOR      = 1024 tokens  (minimum for thinking + tool block)
+#   BUDGET_CEILING    = context_window * output_budget_pct  (80% = 51200)
+#   token_budget()    = dynamic per-ticket, bounded by floor/ceiling
+#   max_tokens        = hard output CAP for runaway prevention (doc-only at runtime)
+#   decompose_budget  = output tokens reserved for decompose phase YAML generation
+#                       (NOT input context — this is the max_tokens for that call)
 #   output_budget_pct = fraction of context_window used as BUDGET_CEILING in runner
-#   All three must be consistent: decompose_budget <= context_window * output_budget_pct
+#
+# Thinking-model note:
+#   Qwen3.5-35B-A3B uses chain-of-thought tokens before producing output.
+#   A typical reasoning pass consumes 300-600 tokens before the first TOOL: line.
+#   BUDGET_FLOOR=1024 ensures thinking + write_file + exec_python fits in one call.
+#   For multi-tool tickets (write + exec + verify), budget will scale to 2048+.
 
 model:
   id: Qwen3.5-35B-A3B-GGUF        # child executor (A3B MoE, ctx_size: 64000)
@@ -24,9 +28,9 @@ model:
   format: openai-compat
   api_key: x
   temperature: 0.2
-  max_tokens: 512                  # output token hard CAP (doc-only — runner uses dynamic budget)
-  decompose_budget: 51200          # 80% of 64000 — INPUT context reserved for decompose phase
-  output_budget_pct: 0.8           # 80% of context_window = BUDGET_CEILING in runner
+  max_tokens: 4096                 # hard output CAP — runaway guard (doc-only; runner uses dynamic budget)
+  decompose_budget: 2048           # output tokens for decompose YAML generation (not input context)
+  output_budget_pct: 0.8           # 80% of context_window = BUDGET_CEILING (51200 tokens)
   context_window: 64000            # A3B actual context window
   timeout_seconds: 180
   max_retries: 2
@@ -36,6 +40,7 @@ model:
     - read_file
     - write_file
     - list_dir
+    - exec_python
   forbidden_tools:
     - browser
     - web_fetch
