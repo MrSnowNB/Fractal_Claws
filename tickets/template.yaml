@@ -1,13 +1,13 @@
 ---
-# Fractal Claws — Ticket Template v1.0
+# Fractal Claws — Ticket Template v1.1
 # Copy this file, fill all fields, save to tickets/open/<TICKET_ID>.yaml
 # Do not leave any field as null when spawning a child.
 
-ticket_id: ""           # e.g. TASK-1712345678  (set by parent at write time)
-version: "1.0"
-status: open            # open | in_progress | closed | escalated
+ticket_id: ""           # e.g. TASK-001  (set by parent at write time)
+version: "1.1"
+status: open            # open | in_progress | closed | failed | escalated
 
-created_at: ""          # ISO 8601  e.g. 2026-04-06T12:38:00
+created_at: ""          # ISO 8601  e.g. 2026-04-07T07:30:00
 updated_at: ""
 
 # ── TASK ─────────────────────────────────────────────────────────────────────
@@ -18,37 +18,28 @@ task: >
 context_files: []       # list of repo-relative paths child should read first
                         # e.g. ["src/tools/first_principles_solver.py"]
 
-result_path: ""         # where child writes its output
-                        # e.g. "tickets/closed/TASK-1712345678-result.md"
+result_path: ""         # where runner writes its output
+                        # e.g. "logs/TASK-001-result.txt"
+
+depends_on: []          # list of ticket_ids that must be closed first
+                        # e.g. ["TASK-001", "TASK-002"]
 
 # ── CONSTRAINTS ───────────────────────────────────────────────────────────
-max_tokens: 512
-timeout_seconds: 90
+timeout_seconds: 120
 decrement: 3            # attempts before status → escalated
 depth: 0                # re-ticket depth (0 = first attempt)
+max_tokens: null        # override token budget if needed; null = auto-derive
 
 # ── TOOL MANIFEST ─────────────────────────────────────────────────────────
-# Child reads this section. These are the ONLY tools it may use.
-# No tool not listed here exists for this agent.
+# Runner reads this section. These are the ONLY tools it may use.
 allowed_tools:
-  - name: read_file
-    path: tools/read_file.py
-    usage: "python tools/read_file.py <filepath>"
-    description: >
-      Read a text file. Returns full contents to stdout.
-      Use this to read each path in context_files before writing your result.
+  - read_file
+  - write_file
+  - exec_python
+  - list_dir
 
-  - name: write_file
-    path: tools/write_file.py
-    usage: "python tools/write_file.py <filepath> \"<content>\""
-    description: >
-      Write content to a file. Creates or overwrites.
-      Returns OK on success, ERROR:<reason> on failure.
-      Call this ONCE to write your final answer to result_path.
-
-# ── AUDIT ──────────────────────────────────────────────────────────────────────
-parent_model: Qwen3.5-4B-GGUF
-child_model: Qwen3.5-4B-GGUF
-endpoint: http://localhost:11434/v1
-attempts: []            # [{ts, attempt_num, outcome, tokens_used}]
-                        # appended by child_agent.py on each run
+# ── AUDIT ──────────────────────────────────────────────────────────────────
+# attempts are written to logs/<ticket_id>-attempts.jsonl (JSONL, not here)
+# one line per attempt:
+# {"ts": "...", "attempt": 1, "outcome": "pass", "tokens": 0, "elapsed_s": 0.0, "finish": "stop"}
+attempts_log: ""        # e.g. "logs/TASK-001-attempts.jsonl" (set by runner)

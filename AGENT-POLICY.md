@@ -1,24 +1,26 @@
 ---
 title: AGENT-POLICY.md
-version: "2.0"
-scope: 4B single-model child-agent POC
+version: "2.1"
+scope: single-parent / single-child ticket harness
 ---
 
 # AGENT-POLICY.md
 
-## Model
+## Endpoint Config
+
+Configured entirely in `settings.yaml`:
 
 ```yaml
-model:    Qwen3.5-4B-GGUF
-endpoint: http://localhost:11434/v1
-format:   openai-compat
-temp:     0.2
-max_tokens: 512
-timeout:  90s
-retries:  2  # stop BEFORE yolo-mode kills at 3
+model:
+  id: <model-id>         # set this for your inference server
+  endpoint: <url>        # openai-compatible endpoint
+  temperature: 0.2
+  context_window: 8192
+  timeout_seconds: 120
+  max_retries: 3
 ```
 
-**One model. One endpoint. Frozen for this POC.**
+**No model names in code or docs. Endpoint is frozen per session.**
 
 ---
 
@@ -27,7 +29,7 @@ retries:  2  # stop BEFORE yolo-mode kills at 3
 | Role | Who | Tools |
 |------|-----|-------|
 | Parent | Cline in VS Code | shell, read_file, write_file, list_dir |
-| Child | child_agent.py (subprocess) | read_file, write_file ONLY |
+| Child | runner.py (harness) | read_file, write_file, exec_python, list_dir |
 
 ---
 
@@ -37,7 +39,7 @@ retries:  2  # stop BEFORE yolo-mode kills at 3
 - `web_fetch`
 - `computer_use`
 - `code_interpreter`
-- `shell` (child only — parent may use shell to spawn child)
+- `shell` (child only — parent may use shell to invoke runner)
 
 If a task requires a browser or web fetch: reject it. Write ISSUE.md. Halt.
 
@@ -53,10 +55,22 @@ Plan → Ticket → Spawn → Result → Validate → Done
 |-------|-----|--------|
 | Plan | Parent | Understand task, write ticket YAML |
 | Ticket | Parent | Write to `tickets/open/` |
-| Spawn | Parent | `python agent/child_agent.py <ticket>` |
-| Result | Child | Read context, write result, close ticket |
+| Spawn | Parent | `python agent/runner.py --once` or `--goal` |
+| Result | Runner | Read context, execute tools, write result, close ticket |
 | Validate | Parent | Run 4 gates |
 | Done | Parent | Confirm all gates green |
+
+---
+
+## Audit Log (JSONL)
+
+Every attempt appends one line to `logs/<ticket_id>-attempts.jsonl`:
+
+```json
+{"ts": "...", "attempt": 1, "outcome": "pass", "tokens": 412, "elapsed_s": 3.2, "finish": "stop"}
+```
+
+Append-only. Never rewrite. Format: JSONL (not JSON) — one object per line.
 
 ---
 
@@ -84,15 +98,16 @@ All four must pass. Any failure → failure procedure → halt.
 
 ## Ticket Rules
 
-- Max 5 sentences per `task` field — 4B context budget
+- Max 5 sentences per `task` field — keep within context budget
 - `context_files` must exist before ticket is written
-- `result_path` must be set before child is spawned
+- `result_path` must be set before runner is invoked
 - `decrement` starts at 3; hit 0 → status: escalated → halt
 
 ---
 
 ## Context Budget
 
-- 60%: write `CHECKPOINT.md`
-- 80%: halt, alert human
-- Never continue a task that cannot complete in remaining budget
+Token budget is derived from `context_window` in `settings.yaml` (not from `max_tokens`):
+- `BUDGET_CEILING` = 40% of `context_window` for execution
+- `decompose_budget` = 25% of `context_window` (if not set explicitly)
+- 80% context used: write `CHECKPOINT.md`, halt, alert human

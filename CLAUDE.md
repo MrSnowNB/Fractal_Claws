@@ -1,36 +1,39 @@
 ---
 title: CLAUDE.md — Fractal Claws POC
-version: "2.0"
-scope: 4B single-model child-agent POC
+version: "2.1"
+scope: single-parent / single-child ticket harness
 ---
 
 # CLAUDE.md
 
-> Cline reads this file before every task. One model. One job. No swarms.
+> Cline reads this file before every task. One harness. Two roles. No swarms.
 
 ---
 
 ## What This Harness Is
 
-A **4B model coding harness** where:
+A **model-agnostic coding harness** where:
 - Cline (in VS Code) is the **parent** — it reads tickets, writes code, calls tools
-- A spawned `child_agent.py` is the **child** — it gets a ticket, uses read/write tools only, writes a result, exits
+- `agent/runner.py` is the **child harness** — it receives a ticket, uses read/write/exec tools, writes a result, exits
 - The ticket YAML is the **only** contract between parent and child
-- Success = child completes a ticket loop end-to-end with read_file + write_file
+- Success = child completes a ticket loop end-to-end and writes a result file
 
-**One model. Two roles. No model switching. No swarms.**
+The model and endpoint are defined in `settings.yaml`. This file contains no model names.
+
+**One harness. Two roles. No model switching. No swarms.**
 
 ---
 
-## Model
+## Endpoint Config
 
-```
-Model:    Qwen3.5-4B-GGUF
-Endpoint: http://localhost:11434/v1
-Format:   openai-compat
+See `settings.yaml`:
+```yaml
+model:
+  id: <your-model-id>
+  endpoint: <your-openai-compat-endpoint>
 ```
 
-Do not load any other model. Do not switch models mid-session.
+Do not hardcode model names in code or docs.
 
 ---
 
@@ -38,8 +41,8 @@ Do not load any other model. Do not switch models mid-session.
 
 1. Read task from human
 2. Write a ticket YAML to `tickets/open/` using `tickets/template.yaml` as schema
-3. Run: `python agent/child_agent.py tickets/open/<ticket>.yaml`
-4. Poll `tickets/closed/` for result file
+3. Run: `python agent/runner.py --once` (single ticket) or `--goal "<goal>"` (decompose + drain)
+4. Poll `tickets/closed/` or `logs/` for result file
 5. Read result, continue work or write next ticket
 6. Run validation gates before declaring done
 
@@ -49,24 +52,29 @@ Do not load any other model. Do not switch models mid-session.
 
 ---
 
-## Child Role (child_agent.py)
+## Child Role (runner.py)
 
-- Receives exactly one ticket YAML via `argv[1]`
-- Reads `context_files` listed in the ticket using `tools/read_file.py`
-- Writes result to `result_path` using `tools/write_file.py`
-- Moves ticket to `tickets/closed/`
-- Exits 0 on success, 1 on failure
+- Receives tickets from `tickets/open/`
+- Reads `context_files` listed in the ticket
+- Executes tool calls (read_file, write_file, exec_python, list_dir)
+- Writes result to `logs/<ticket_id>-result.txt`
+- Appends one JSONL record to `logs/<ticket_id>-attempts.jsonl` per attempt
+- Moves ticket to `tickets/closed/` on pass, `tickets/failed/` on max depth
+- Exits 0 on full queue drain, 1 on unrecoverable failure
 
-**Child has exactly two tools: `read_file` and `write_file`. Nothing else.**
+**Child tools: `read_file`, `write_file`, `exec_python`, `list_dir`. Nothing else.**
 
 ---
 
 ## Ticket Lifecycle
 
 ```
-tickets/open/       <- parent writes here
-tickets/in_progress/ <- child moves ticket here on pickup
-tickets/closed/     <- child writes result, moves ticket here
+tickets/open/        <- parent writes here
+tickets/in_progress/ <- runner moves ticket here on pickup
+tickets/closed/      <- runner closes ticket here on pass
+tickets/failed/      <- runner moves ticket here on max depth
+logs/<id>-result.txt <- result written here by runner
+logs/<id>-attempts.jsonl <- JSONL audit log, one line per attempt
 ```
 
 ---
@@ -91,7 +99,7 @@ All four must be green before any task is "done":
 3. Write `ISSUE.md`
 4. Halt. Do not retry. Wait for human.
 
-**Max retries before halt: 2.** YOLO mode kills at 3 — stop at 2.
+**Max retries before halt: 2.** Stop at 2 — YOLO mode kills at 3.
 
 ---
 
@@ -110,5 +118,5 @@ If any check fails — fix it before accepting any task.
 1. One tool call per turn. Wait for result.
 2. Never narrate. Never explain. Call the tool, then stop.
 3. Never spawn more than one child per ticket.
-4. Never write to `tickets/closed/` directly — child does that.
+4. Never write to `tickets/closed/` directly — runner does that.
 5. Context at 80%: write `CHECKPOINT.md`, halt, alert human.
