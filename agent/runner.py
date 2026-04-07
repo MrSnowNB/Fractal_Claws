@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-runner.py — Fractal Claws agent skeleton v4
+runner.py — Fractal Claws agent skeleton v5
 
 Single entry point. Reads all config from settings.yaml.
 No model names, no depths, no tiers hardcoded here.
@@ -17,6 +17,13 @@ Budget policy (v4 — thinking-model aware):
     token_budget() multiplier = *24         (thinking models need 3x headroom vs *8)
     max_tokens in settings.yaml = hard output CAP (doc-only; runner uses dynamic budget)
     decompose_budget in settings.yaml = output tokens for decompose YAML (not input ctx)
+
+Handoff logging (v5):
+    Every attempt appends one JSONL line to logs/<ticket_id>-attempts.jsonl:
+    {"ts": ..., "attempt": N, "outcome": "pass|fail|error",
+     "tokens": N, "elapsed_s": N, "finish": "stop|length|...",
+     "budget": N, "tool_calls": N, "reason": "..."}
+    This log is the audit trail for parent verification and triage.
 """
 
 import os
@@ -61,33 +68,15 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
 
 # ── token budget ──────────────────────────────────────────────────────────────
-# v4 policy — thinking-model aware:
-#   BUDGET_FLOOR   = 1024  (was 256 — minimum for reasoning pass + tool block)
-#   BUDGET_CEILING = context_window * output_budget_pct  (unchanged, 80%)
-#   multiplier     = *24   (was *8 — thinking models burn 300-600 tok before output)
-#
-# Why *24:
-#   task_words=15 → estimate = int(15/0.75*24) = 480 → clamped to BUDGET_FLOOR=1024
-#   task_words=50 → estimate = int(50/0.75*24) = 1600 → passes through
-#   task_words=200 → estimate = int(200/0.75*24) = 6400 → clamped to BUDGET_CEILING
-# This ensures even terse task descriptions get enough room for a thinking pass.
 
 CONTEXT_WINDOW  = int(CFG["model"].get("context_window", 8192))
 BUDGET_PCT      = float(CFG["model"].get("output_budget_pct", 0.8))
 BUDGET_CEILING  = int(CONTEXT_WINDOW * BUDGET_PCT)
-BUDGET_FLOOR    = 1024   # v4: raised from 256 — thinking model minimum
+BUDGET_FLOOR    = 1024
 
 WORDS_PER_TOKEN = 0.75
 
 def token_budget(ticket: dict) -> int:
-    """Return the output token budget for a single ticket.
-    Scales with task complexity but is bounded by BUDGET_FLOOR / BUDGET_CEILING.
-    If the ticket overrides max_tokens directly, that value wins.
-
-    Multiplier is *24 (up from *8) to give thinking models sufficient headroom.
-    Qwen3.5-35B-A3B consumes 300-600 reasoning tokens before producing tool output.
-    A floor of 1024 ensures every ticket can complete at least one full tool call.
-    """
     task_words = len(str(ticket.get("task", "")).split())
     estimate   = int(task_words / WORDS_PER_TOKEN * 24)
     budget     = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
@@ -115,6 +104,55 @@ def hw_snap() -> dict:
     except Exception:
         snap["lemonade_loaded"] = []
     return snap
+
+
+# ── JSONL attempt log ─────────────────────────────────────────────────────────
+
+def append_attempt_log(ticket_id: str, attempt: int, outcome: str,
+                       tokens: int, elapsed: float, finish: str,
+                       budget: int, tool_calls: int, reason: str,
+                       hw_pre: dict, hw_post: dict) -> None:
+    """
+    Append one JSONL line to logs/<ticket_id>-attempts.jsonl.
+    This is the handoff audit trail used by parent verification (TASK-011)
+    and by triage when a ticket fails mid-chain.
+
+    Schema (all fields always present):
+      ts          ISO-8601 timestamp of attempt completion
+      ticket_id   e.g. TASK-008
+      attempt     1-indexed retry count
+      outcome     pass | fail | error
+      tokens      total tokens consumed (prompt + completion)
+      elapsed_s   wall-clock seconds for the model call
+      tok_s       tokens per second
+      finish      model finish_reason (stop | length | content_filter | ...)
+      budget      max_tokens requested for this attempt
+      tool_calls  number of tool blocks parsed from response
+      reason      pass/fail/error detail string
+      ram_pre_gb  RAM used before model call
+      ram_post_gb RAM used after model call
+      cpu_pre_pct CPU % before model call
+    """
+    log_path = os.path.join(LOG_DIR, f"{ticket_id}-attempts.jsonl")
+    record = {
+        "ts":          time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "ticket_id":   ticket_id,
+        "attempt":     attempt,
+        "outcome":     outcome,
+        "tokens":      tokens,
+        "elapsed_s":   round(elapsed, 3),
+        "tok_s":       round(tokens / elapsed, 1) if elapsed > 0 else 0,
+        "finish":      finish,
+        "budget":      budget,
+        "tool_calls":  tool_calls,
+        "reason":      reason,
+        "ram_pre_gb":  hw_pre.get("ram_used_gb", None),
+        "ram_post_gb": hw_post.get("ram_used_gb", None),
+        "cpu_pre_pct": hw_pre.get("cpu_pct", None),
+    }
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    print(f"  [log] attempt record → {log_path}")
 
 
 # ── ticket helpers ────────────────────────────────────────────────────────────
@@ -196,11 +234,6 @@ def inject_upstream_context(ticket: dict) -> str:
 # ── model call ────────────────────────────────────────────────────────────────
 
 def call_model(messages: list, budget: int) -> tuple:
-    """
-    Single guarded model call used everywhere — decompose AND execute.
-    Returns (raw_text, total_tokens, finish_reason, elapsed_s).
-    Raises RuntimeError after all retries exhausted.
-    """
     for attempt in range(1, MAX_RETRIES + 2):
         try:
             t0       = time.perf_counter()
@@ -238,7 +271,7 @@ def call_model(messages: list, budget: int) -> tuple:
     raise RuntimeError(f"model call failed after {MAX_RETRIES + 1} attempts")
 
 
-# ── tools ─────────────────────────────────────────────────────────────────────
+# ── tools ────────────────────────────────────────────────────────────────────
 
 def tool_read_file(path: str) -> str:
     if not os.path.exists(path):
@@ -248,9 +281,6 @@ def tool_read_file(path: str) -> str:
 
 
 def tool_write_file(path: str, content: str) -> str:
-    # Auto-sandbox: bare .py filenames (no directory component) → output/
-    # This corrects a common model compliance failure where the model writes
-    # to the project root instead of output/ despite prompt instructions.
     if path.endswith(".py") and os.path.dirname(path) == "":
         original_path = path
         path = os.path.join("output", path)
@@ -333,7 +363,7 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
     return results
 
 
-# ── prompt ────────────────────────────────────────────────────────────────────
+# ── prompt ────────────────────────────────────────────────────────────────
 
 TOOL_SYNTAX = """\
 TOOL: read_file
@@ -373,8 +403,10 @@ def execute_ticket(ticket_path: str) -> bool:
     ticket    = load_ticket(ticket_path)
     ticket_id = ticket.get("ticket_id", Path(ticket_path).stem)
     result_path = ticket.get("result_path", f"{LOG_DIR}/{ticket_id}-result.txt")
+    depth     = int(ticket.get("depth", 0))
+    attempt_n = depth + 1
 
-    print(f"\n[runner] ── {ticket_id} ──")
+    print(f"\n[runner] ── {ticket_id} (attempt {attempt_n}) ──")
 
     upstream = inject_upstream_context(ticket)
     prompt   = build_prompt(ticket, upstream)
@@ -396,9 +428,12 @@ def execute_ticket(ticket_path: str) -> bool:
             budget=budget,
         )
     except RuntimeError as e:
+        hw_post = hw_snap()
+        append_attempt_log(ticket_id, attempt_n, "error", 0, 0.0, "error",
+                           budget, 0, str(e), hw_pre, hw_post)
         print(f"  [runner] model call failed: {e}")
-        _write_result(result_path, ticket_id, "model_error", 0, str(e), elapsed=0,
-                      hw_pre=hw_pre, hw_post=hw_snap(), tool_results=[], raw_full=str(e))
+        _write_result(result_path, ticket_id, "error", 0, str(e), 0.0,
+                      hw_pre, hw_post, [], str(e), raw_full=str(e))
         return False
 
     hw_post = hw_snap()
@@ -407,13 +442,18 @@ def execute_ticket(ticket_path: str) -> bool:
 
     tool_results = parse_and_run_tools(raw, exec_timeout=TIMEOUT)
     passed, reason = _evaluate(result_path, tool_results)
+    outcome = "pass" if passed else "fail"
+
+    append_attempt_log(ticket_id, attempt_n, outcome, tokens, elapsed, finish,
+                       budget, len(tool_results), reason, hw_pre, hw_post)
 
     _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
                   hw_pre, hw_post, tool_results, reason, raw_full=raw)
 
     if passed:
-        ticket["status"]     = "closed"
-        ticket["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        ticket["status"]       = "closed"
+        ticket["updated_at"]   = time.strftime("%Y-%m-%dT%H:%M:%S")
+        ticket["attempts_log"] = f"{LOG_DIR}/{ticket_id}-attempts.jsonl"
         dest = os.path.join(CLOSED_DIR, os.path.basename(ticket_path))
         save_ticket(dest, ticket)
         os.remove(ticket_path)
@@ -439,7 +479,6 @@ def _evaluate(result_path: str, tool_results: list) -> tuple:
 
 def _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
                   hw_pre, hw_post, tool_results, reason="ok", raw_full=None):
-    """Write full result log. raw_full is the complete untruncated model response."""
     os.makedirs(os.path.dirname(result_path) if os.path.dirname(result_path) else ".",
                 exist_ok=True)
     lines = [
@@ -463,8 +502,6 @@ def _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
             lines += [f"[{tool}] {path}", result, ""]
     else:
         lines += ["no tool calls detected", ""]
-    # Always write the complete raw model response — no truncation.
-    # This is disk-only cost and provides full debugging fidelity.
     lines += [
         "=== raw model response (complete) ===",
         raw_full if raw_full is not None else raw,
@@ -503,13 +540,9 @@ Output format example:
   title: "Generate Fibonacci sequence to output/fib.py and execute"
   task: >
     Write a Python script to output/fib.py that prints the first 10 Fibonacci
-    numbers, one per line. The script must use a simple iterative approach.
-    Execute the script via exec_python using path output/fib.py.
+    numbers, one per line. Execute the script via exec_python using path output/fib.py.
     Verify that the output contains '55' (the 10th Fibonacci number).
-    This produces the numeric sequence artifact required by downstream verification tasks.
-  rationale: >
-    Establishes the base numeric output artifact. Downstream tasks depend on
-    this stdout to validate sequence correctness.
+  rationale: Establishes the base numeric output artifact.
   produces: [output/fib.py, stdout:fibonacci-10]
   consumes: []
   tags: [fibonacci, numeric-output, write-and-exec, foundation]
@@ -519,12 +552,7 @@ Output format example:
 
 
 def decompose_goal(goal: str, first_n: int) -> list:
-    """
-    Decompose a plain-English goal into a list of ticket dicts.
-    Routes through call_model() — same retry + empty-choice guard as execute_ticket.
-    """
     print(f"[runner] decomposing goal...")
-
     messages = [
         {"role": "system", "content": DECOMPOSE_SYSTEM},
         {"role": "user",
@@ -534,23 +562,18 @@ def decompose_goal(goal: str, first_n: int) -> list:
              f"Output ONLY the YAML list."
          )},
     ]
-
     decompose_budget = CFG["model"].get("decompose_budget")
     if decompose_budget is None:
         decompose_budget = 2048
     decompose_budget = min(int(decompose_budget), BUDGET_CEILING)
-
     try:
         raw, tokens, finish, elapsed = call_model(messages, budget=decompose_budget)
     except RuntimeError as e:
         print(f"[runner] decompose failed: {e}")
         return []
-
     print(f"[runner] decompose: {tokens} tokens  elapsed={elapsed}s  finish={finish}")
-
     cleaned = re.sub(r'^```[\w]*\n?', '', raw.strip(), flags=re.MULTILINE)
     cleaned = re.sub(r'```$', '', cleaned.strip())
-
     try:
         tickets = yaml.safe_load(cleaned)
         if not isinstance(tickets, list):
@@ -587,17 +610,6 @@ def write_tickets(tickets: list) -> None:
 # ── drain loop ────────────────────────────────────────────────────────────────
 
 def drain(once: bool = False) -> None:
-    """
-    Core loop. Keeps running until:
-      - no open tickets remain, OR
-      - all remaining open tickets have unmet deps AND nothing was dispatched
-        in the last full pass (deadlock guard).
-
-    v4: drain now distinguishes three deferred states:
-      - true deadlock: dep exists in open/ (circular or missing)
-      - failed upstream: dep exists in failed/ (upstream task exhausted retries)
-      - missing dep: dep not in open/, closed/, or failed/ (ticket was never created)
-    """
     max_depth = int(CFG["tickets"].get("decrement_default", 3))
 
     while True:
@@ -644,7 +656,6 @@ def drain(once: bool = False) -> None:
                 return
 
         if dispatched_this_pass == 0 and deferred:
-            # v4: distinguish failure modes for clearer diagnostics
             print(f"[runner] blocked — {len(deferred)} ticket(s) cannot proceed:")
             for p in deferred:
                 ticket    = load_ticket(p)
@@ -657,7 +668,6 @@ def drain(once: bool = False) -> None:
                                 and not os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
                 open_deps    = [d for d in unmet
                                 if os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
-
                 if failed_deps:
                     print(f"  {ticket_id}: UPSTREAM FAILED → {failed_deps} exhausted retries")
                 elif missing_deps:
@@ -688,7 +698,7 @@ def prewarm() -> None:
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    once      = "--once"      in sys.argv
+    once       = "--once"       in sys.argv
     no_prewarm = "--no-prewarm" in sys.argv
 
     if not no_prewarm:
@@ -711,7 +721,6 @@ def main() -> None:
                 except (IndexError, ValueError):
                     pass
         first_n = max(existing_nums, default=0) + 1
-
         tickets = decompose_goal(goal, first_n)
         if not tickets:
             print("[runner] decomposition produced no tickets — abort")

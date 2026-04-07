@@ -1,0 +1,58 @@
+ticket_id: TASK-011
+title: "Parent verification: assert all harness artifacts and attempt logs are present and correct"
+version: "1.1"
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-07T13:36:00"
+updated_at: ""
+agent: Qwen3.5-35B-A3B-GGUF
+depends_on: [TASK-010]
+allowed_tools: [read_file, write_file, exec_python]
+result_path: "logs/TASK-011-result.txt"
+attempts_log: "logs/TASK-011-attempts.jsonl"
+context_files: []
+timeout_seconds: 180
+
+tags:
+  - verification
+  - parent-check
+  - audit-read
+  - attempt-log-validation
+  - harness-test
+  - end-to-end
+
+produces:
+  - output/harness_result.json
+
+consumes:
+  - output/word_freq.py
+  - output/report.md
+  - output/audit.json
+  - logs/TASK-008-attempts.jsonl
+  - logs/TASK-009-attempts.jsonl
+  - logs/TASK-010-attempts.jsonl
+
+rationale: >
+  This is the parent verification stage — the final gate of the harness integration
+  test. It reads every artifact and every attempt log from the chain, asserts
+  correctness contracts, and writes a final pass/fail verdict to
+  output/harness_result.json. If any prior stage silently produced bad output,
+  this ticket catches it. It also validates that JSONL attempt logs were written
+  for every ticket, confirming the handoff metadata system is working end-to-end.
+
+task: >
+  All prior tickets have run. Write a Python verification script to
+  output/verify_harness.py that performs the following checks and prints
+  a structured result. Check 1: assert output/word_freq.py exists and its
+  content contains 'the: 5'. Check 2: assert output/report.md exists and
+  contains '## Top Words'. Check 3: read output/audit.json, parse it as JSON,
+  assert 'report_contains_top_words' is true and 'test_run' equals
+  'harness-integration-v1'. Check 4: assert logs/TASK-008-attempts.jsonl,
+  logs/TASK-009-attempts.jsonl, and logs/TASK-010-attempts.jsonl all exist
+  and each contains at least one line parseable as JSON with key 'outcome'.
+  After all checks, write output/harness_result.json with keys 'passed' (bool),
+  'checks' (list of check names that passed), 'failed_checks' (list of any
+  that failed), and 'ts' (ISO-8601 UTC timestamp). Then execute
+  output/verify_harness.py using exec_python PATH output/verify_harness.py.
+  The script must exit with returncode 0 if all checks pass, returncode 1 if any fail.

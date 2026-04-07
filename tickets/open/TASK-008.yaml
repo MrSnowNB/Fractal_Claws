@@ -1,0 +1,45 @@
+ticket_id: TASK-008
+title: "Compute word frequency from seed corpus, write and execute output/word_freq.py"
+version: "1.1"
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-07T13:36:00"
+updated_at: ""
+agent: Qwen3.5-35B-A3B-GGUF
+depends_on: []
+allowed_tools: [write_file, exec_python]
+result_path: "logs/TASK-008-result.txt"
+attempts_log: "logs/TASK-008-attempts.jsonl"
+context_files: []
+timeout_seconds: 120
+
+tags:
+  - word-frequency
+  - corpus-analysis
+  - write-and-exec
+  - foundation
+  - harness-test
+
+produces:
+  - output/word_freq.py
+  - stdout:word-frequency-table
+
+consumes: []
+
+rationale: >
+  This is the data-generation stage of the harness integration test. It produces
+  the primary artifact (word frequency table) that all downstream tasks depend on.
+  It directly tests write_file + exec_python tool chaining, the output/ sandbox
+  enforcement, and budget floor behavior on a moderately complex script.
+
+task: >
+  Write a Python script to output/word_freq.py that defines a short seed corpus
+  as a multiline string (use exactly this text: "the quick brown fox jumps over
+  the lazy dog the fox and the dog sat by the fire the end"), tokenizes it by
+  splitting on whitespace, counts word frequencies using a dict, then prints
+  each word and its count sorted by frequency descending in the format
+  "word: N" one per line. After writing the file, execute it using exec_python
+  with PATH output/word_freq.py. The script must run with returncode 0 and
+  stdout must contain the line "the: 5" as the highest-frequency word.
+  Both write_file and exec_python paths must be output/word_freq.py.

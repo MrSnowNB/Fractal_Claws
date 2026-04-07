@@ -1,6 +1,6 @@
 ---
 title: AGENT-POLICY.md
-version: "3.0"
+version: "3.1"
 scope: single-parent / single-child ticket harness
 ---
 
@@ -32,17 +32,12 @@ model:
 | Child | runner.py (harness) | Qwen3.5-35B-A3B-GGUF (A3B) | read_file, write_file, exec_python, list_dir |
 
 > **4B Model: DEPRECATED** — Qwen3.5-4B-GGUF is deferred to a future integration phase.
-> Do not reference, load, or test the 4B model during active ticket harness sessions.
-> It may be re-introduced later as a leaf/worker node once its YAML generation issues are resolved.
 
 ---
 
 ## Forbidden Tools (Both Roles)
 
-- `browser`
-- `web_fetch`
-- `computer_use`
-- `code_interpreter`
+- `browser`, `web_fetch`, `computer_use`, `code_interpreter`
 - `shell` (child only — parent may use shell to invoke runner)
 
 If a task requires a browser or web fetch: reject it. Write ISSUE.md. Halt.
@@ -52,29 +47,59 @@ If a task requires a browser or web fetch: reject it. Write ISSUE.md. Halt.
 ## Lifecycle
 
 ```
-Plan → Ticket → Spawn → Result → Validate → Done
+Plan → Ticket → Push → Spawn → Result → Validate → Done
 ```
 
 | Phase | Who | Action |
 |-------|-----|--------|
-| Plan | Parent (Cline) | Understand task, write ticket YAML |
-| Ticket | Parent | Write to `tickets/open/` |
-| Spawn | Parent | `python agent/runner.py --once` or `--goal` |
-| Result | Runner (A3B) | Read context, execute tools, write result, close ticket |
-| Validate | Parent | Run 4 gates |
-| Done | Parent | Confirm all gates green |
+| Plan | Parent (Cline) | Understand task, decompose into tickets |
+| Ticket | Parent | Write to `tickets/open/`, git push |
+| Spawn | Parent | `python agent/runner.py --no-prewarm` |
+| Result | Runner (A3B) | Read context, execute tools, write result + JSONL log, close ticket |
+| Validate | Parent | Read `harness_result.json`, run 4 gates, check attempt logs |
+| Done | Parent | All gates green, attempt logs have `outcome: pass` for all tickets |
+
+---
+
+## Handoff Metadata (Mandatory — v3.1)
+
+Every ticket execution appends one JSONL line to `logs/<ticket_id>-attempts.jsonl`.
+This log is the audit trail for:
+- Parent verification (reading attempt logs to confirm child completed correctly)
+- Triage when a multi-ticket chain fails mid-run
+- Performance monitoring (tok/s, elapsed_s, budget utilization)
+
+### JSONL schema
+
+```json
+{
+  "ts":          "2026-04-07T13:45:00",
+  "ticket_id":   "TASK-008",
+  "attempt":     1,
+  "outcome":     "pass",
+  "tokens":      528,
+  "elapsed_s":   15.26,
+  "tok_s":       34.6,
+  "finish":      "stop",
+  "budget":      3296,
+  "tool_calls":  2,
+  "reason":      "ok",
+  "ram_pre_gb":  98.27,
+  "ram_post_gb": 99.1,
+  "cpu_pre_pct": 4.0
+}
+```
+
+`outcome` values: `pass` | `fail` | `error`  
+`finish` values: `stop` | `length` | `content_filter` | `unknown`
 
 ---
 
 ## Audit Log (JSONL)
 
-Every attempt appends one line to `logs/<ticket_id>-attempts.jsonl`:
-
-```json
-{"ts": "...", "attempt": 1, "outcome": "pass", "tokens": 412, "elapsed_s": 3.2, "finish": "stop"}
-```
-
-Append-only. Never rewrite. Format: JSONL (not JSON) — one object per line.
+Append-only. Never rewrite. One object per line.  
+Path: `logs/<ticket_id>-attempts.jsonl`  
+Gitignored (runtime data, not committed).
 
 ---
 
@@ -89,6 +114,11 @@ python tools/spec_check.py
 
 All four must pass. Any failure → failure procedure → halt.
 
+For harness integration test specifically, also run:
+```bash
+pytest -q tests/test_harness_artifacts.py
+```
+
 ---
 
 ## Failure Procedure
@@ -102,16 +132,19 @@ All four must pass. Any failure → failure procedure → halt.
 
 ## Ticket Rules
 
-- Max 5 sentences per `task` field — keep within context budget
+- Minimum 3 sentences per `task` field (thinking-model needs full context)
 - `context_files` must exist before ticket is written
 - `result_path` must be set before runner is invoked
+- `attempts_log` must be set to `logs/<ticket_id>-attempts.jsonl`
 - `decrement` starts at 3; hit 0 → status: escalated → halt
+- Always check all three ticket dirs for max ID before assigning new ticket_id
+- All `.py` output paths must use `output/` prefix — never bare filenames
 
 ---
 
 ## Context Budget
 
-Token budget is derived from `context_window` in `settings.yaml` (not from `max_tokens`):
-- `BUDGET_CEILING` = 40% of `context_window` for execution
-- `decompose_budget` = 25% of `context_window` (if not set explicitly)
+- `BUDGET_FLOOR` = 1024 tokens (minimum for thinking pass + tool block)
+- `BUDGET_CEILING` = `context_window * output_budget_pct` (80% = 51200)
+- `token_budget()` multiplier = `*24` (thinking model headroom)
 - 80% context used: write `CHECKPOINT.md`, halt, alert human
