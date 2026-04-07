@@ -29,7 +29,7 @@ model:
   output_budget_pct: 0.8           # 80% of context_window = BUDGET_CEILING in runner
   context_window: 64000            # A3B actual context window
   timeout_seconds: 180
-  max_retries: 3
+  max_retries: 2
   stream: false
   allowed_tools:
     - shell

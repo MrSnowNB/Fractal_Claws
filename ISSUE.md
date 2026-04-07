@@ -14,7 +14,20 @@ last_updated: "2026-04-07"
 
 ## Open Issues
 
-_None. No open issues._
+### ISS-20260407-003: runner.py max_retries exceeded (YOLO kill at 3)
+
+- **Status**: OPEN
+- **Title**: runner.py terminated after max_retries (3) exceeded during TASK-001
+- **Date**: 2026-04-07
+- **Context**: Task runner.py terminated with "max_retries exceeded" after 3 attempts during TASK-001 execution
+- **Root Cause**: settings.yaml had max_retries=3 but policy requires stop at 2 (YOLO kills at 3)
+- **Resolution**: settings.yaml max_retries reduced to 2; pre_flight.py now validates max_retries ≤ 2
+- **Human action required**: None — policy fix implemented, REPLICATION-NOTES.md updated
+
+---
+
+### ISS-20260407-002: 4B Model (duplicate entry)
+### ISS-20260407-002: 4B Model (duplicate entry)
 
 ---
 

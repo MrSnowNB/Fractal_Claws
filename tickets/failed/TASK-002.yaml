@@ -1,14 +1,26 @@
 ticket_id: TASK-002
-title: Generate Fibonacci
-task: Write script to generate first 20 fib numbers and save to output/fib.txt
+version: '1.0'
+status: failed
+created_at: '2026-04-07'
+updated_at: '2026-04-07T11:50:16'
+title: 'Fibonacci script: write, execute, verify'
+task: 'Write a Python script to output/fib.py that prints the first 10 Fibonacci
+
+  numbers, one per line, starting from 1. Then execute it.
+
+  What done looks like: The script runs, returncode is 0,
+
+  and stdout contains the number 55 on its own line.
+
+  '
+context_files: []
 depends_on: []
 allowed_tools:
 - write_file
 - exec_python
-status: failed
 depth: 3
-max_depth: 2
-created_at: '2026-04-07'
-updated_at: '2026-04-07T09:11:23'
+decrement: 3
+max_tokens: null
 result_path: logs/TASK-002-result.txt
-context_files: []
+attempts_log: logs/TASK-002-attempts.jsonl
+timeout_seconds: 120

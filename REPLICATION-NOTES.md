@@ -76,6 +76,8 @@ python agent/runner.py --goal "<your goal here>"
 | 2026-04-07 | **REFACTOR**: 4B formally deprecated; harness locked to Coder-Next (parent) + A3B (child) |
 | 2026-04-07 | settings.yaml context_window updated to 64000 (A3B actual); 4B perf block removed |
 | 2026-04-07 | pre_flight.py default probe target switched to A3B; 4B alias hard-blocked with warning |
+| 2026-04-07 | settings.yaml max_retries reduced from 3 to 2 to comply with YOLO policy (stop at 2 retries) |
+| 2026-04-07 | runner.py max_retries validation added to pre_flight.py (exit 1 if max_retries > 2) |
 
 ---
 

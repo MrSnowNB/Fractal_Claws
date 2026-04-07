@@ -157,3 +157,58 @@ TS-XXX:
   - Update all docs to frame 4B as DEPRECATED (future phase), not UNAVAILABLE (blocker)
 **Prevention**: Any reference to Qwen3.5-4B-GGUF in active session docs must include the label `DEPRECATED — future integration`. Do not create TROUBLESHOOTING entries for deprecated models unless they surface in an active run.  
 **Recurrence**: false
+
+---
+
+### TS-20260407-005: Runner Max Retries Policy Violation
+
+**Status**: OPEN ❌ 2026-04-07  
+**Context**: Runner.py executes model call exceeding retry limit per policy.  
+**Symptom**: Model call failed after 4 attempts; deadlock reached (TASK-003 blocked on TASK-002).  
+**Error Snippet**: 
+```
+[model] attempt 4: empty content — retry in 4s
+[runner] model call failed: model call failed after 4 attempts
+[runner] max_depth reached → failed/TASK-002.yaml
+[runner] deadlock — 1 ticket(s) blocked on unmet deps:
+  TASK-003 waiting on ['TASK-002']
+```
+**Probable Cause**: Configuration policy violation:
+  - Policy states: "YOLO kills at 3 — stop at 2 retries"
+  - settings.yaml had `max_retries: 3`
+  - runner.py uses `range(1, MAX_RETRIES + 2)` = 4 attempts total
+**Quick Fix**: Update settings.yaml `max_retries: 2`  
+**Permanent Fix**: Add validation in pre_flight.py to check max_retries ≤ 2. Enforce policy compliance in CI/CD.  
+**Prevention**: Add settings.yaml schema validation; run pre_flight.py before any runner invocation.  
+**Recurrence**: false — root cause identified and fixed in settings.yaml
+
+---
+
+### TS-20260407-007: Runner Max Retries Exceeded (YOLO Policy)
+
+**Status**: RESOLVED ✅ 2026-04-07  
+**Context**: runner.py terminates after max_retries exceeded during TASK-001 execution.  
+**Symptom**: `max_retries exceeded` error, runner exits 1.  
+**Error Snippet**: 
+```
+[runner] model call failed: model call failed after 4 attempts  
+[runner] max_retries exceeded
+```
+**Root Cause**: settings.yaml had `max_retries: 3` but policy requires `max_retries: 2` (YOLO kills at 3 — stop at 2).  
+**Quick Fix**: Update settings.yaml `max_retries: 2`  
+**Permanent Fix**: Add pre_flight.py validation to check max_retries ≤ 2; pre_flight now exits 1 if max_retries > 2.  
+**Prevention**: Enforce settings.yaml schema validation; run pre_flight.py before any runner invocation.  
+**Recurrence**: false — policy fixed and validated
+
+---
+
+### TS-20260407-006: exec_python Path Restriction Error
+
+**Status**: OPEN ❌ 2026-04-07
+**Context**: Child agent attempts to execute Python file outside allowed output/ directory.  
+**Symptom**: `[tool] exec_python → fib.py` followed by `ERROR: exec_python blocked — path must be inside output/ (got fib.py)`  
+**Probable Cause**: Ticket TASK-002 write_file created `fib.py` at project root, but exec_python only allows paths inside `output/`.  
+**Quick Fix**: Update ticket task to write to `output/fib.py` instead of `fib.py`.  
+**Permanent Fix**: Add path validation in child_agent.py exec_python tool to ensure path starts with `output/`. Add test case in conftest.py to verify path restriction.  
+**Prevention**: Document path restriction in tickets/template.yaml comments; add path prefix validation.  
+**Recurrence**: false — path restriction is intentional security feature
