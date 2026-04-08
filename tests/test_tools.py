@@ -8,8 +8,15 @@ test_run_command_blocked_unix:
     test_run_command_blocked_windows which uses cmd.exe syntax.
     Resolution: both tests verify the blocklist fires; together they give
     full cross-platform coverage.
+
+test_run_command_basic / test_run_command_elapsed_ms:
+    'echo' is a shell built-in on Windows — there is no echo.exe.
+    subprocess.run(["echo", ...]) without shell=True raises FileNotFoundError
+    [WinError 2] on Windows. Fix: use ["cmd", "/c", "echo", ...] on win32.
+    Documented in docs/KNOWN-ISSUES.md as KI-003.
 """
 import sys
+import platform
 import pytest
 from pathlib import Path
 
@@ -17,10 +24,24 @@ from tools.terminal import run_command
 from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
 
 
+# --- helpers ---
+
+def _echo_cmd(*words):
+    """Return a cross-platform echo command list.
+
+    On Windows, 'echo' is a cmd.exe built-in with no standalone exe.
+    subprocess.run(["echo", ...]) raises FileNotFoundError [WinError 2].
+    We route through cmd /c on win32 to avoid this.
+    """
+    if sys.platform == "win32":
+        return ["cmd", "/c", "echo"] + list(words)
+    return ["echo"] + list(words)
+
+
 # --- terminal.py tests ---
 
 def test_run_command_basic():
-    r = run_command(["echo", "hello"])
+    r = run_command(_echo_cmd("hello"))
     assert r["returncode"] == 0
     assert "hello" in r["stdout"]
     assert r["blocked"] is False
@@ -46,7 +67,7 @@ def test_run_command_timeout():
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason=(
-        "KNOWN ISSUE: bash is not available on Windows. "
+        "KNOWN ISSUE KI-001: bash is not available on Windows. "
         "Blocklist coverage for Windows is provided by test_run_command_blocked_windows. "
         "Resolution: install Git Bash or WSL to enable this test on Windows."
     ),
@@ -70,13 +91,13 @@ def test_run_command_blocked_windows():
 
 
 def test_run_command_elapsed_ms():
-    r = run_command(["echo", "hi"])
+    """Elapsed ms is always a non-negative int. Uses cross-platform echo."""
+    r = run_command(_echo_cmd("hi"))
     assert isinstance(r["elapsed_ms"], int)
     assert r["elapsed_ms"] >= 0
 
 
 def test_run_command_cwd(tmp_path):
-    import platform
     if platform.system() == "Windows":
         r = run_command(["cmd", "/c", "echo %CD%"], cwd=str(tmp_path))
     else:
