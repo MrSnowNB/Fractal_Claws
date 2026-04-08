@@ -5,3 +5,4 @@
   "gate_2": "tests/: 166 passed, 1 skipped",
   "commits_verified": ["17017ff"]
 }
+{"ts": "2026-04-08T11:05:00-04:00", "step": "HOUSEKEEPING", "action": "KNOWN-ISSUE-context-window.md created — context bottleneck diagnosed, 3-phase solution trajectory documented (ticket-scoped context, anchor journal, GraphRAG index)", "status": "done", "files": ["AI-FIRST/KNOWN-ISSUE-context-window.md", "logs/luffy-journal.jsonl"]}
