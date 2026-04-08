@@ -128,7 +128,9 @@ class Ticket:
     consumes: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
     agent: str = ""
-    
+    graph_scope: Optional[Dict[str, Any]] = None
+    return_to: Optional[str] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert ticket to dictionary."""
         result_dict = None
@@ -161,6 +163,8 @@ class Ticket:
             "consumes": self.consumes,
             "tags": self.tags,
             "agent": self.agent,
+            "graph_scope": self.graph_scope,
+            "return_to": self.return_to,
         }
     
     @classmethod
@@ -212,6 +216,8 @@ class Ticket:
             consumes=data.get("consumes", []),
             tags=data.get("tags", []),
             agent=data.get("agent", ""),
+            graph_scope=data.get("graph_scope"),
+            return_to=data.get("return_to"),
         )
 
 

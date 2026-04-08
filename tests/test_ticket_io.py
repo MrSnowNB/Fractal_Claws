@@ -538,3 +538,50 @@ class TestEnvVarHardFail:
         path = _write(tmp_path, "TASK-ENV.yaml", content)
         with pytest.raises(TicketIOError, match="required-task"):
             load_ticket(path)
+
+
+# ---------------------------------------------------------------------------
+# T18 — STEP-09: graph_scope and return_to round-trip
+# ---------------------------------------------------------------------------
+
+class TestStep09SchemaSlots:
+
+    def test_graph_scope_none_survives_round_trip(self, tmp_path):
+        """graph_scope=None defaults and survives to_dict/from_dict."""
+        path = _write(tmp_path, "TASK-001.yaml", MINIMAL_YAML)
+        ticket = load_ticket(path)
+        assert ticket.graph_scope is None
+        d = ticket.to_dict()
+        assert d["graph_scope"] is None
+        reloaded = Ticket.from_dict(d)
+        assert reloaded.graph_scope is None
+
+    def test_graph_scope_non_null_survives_round_trip(self, tmp_path):
+        """graph_scope with value survives to_dict/from_dict."""
+        path = _write(tmp_path, "TASK-001.yaml", MINIMAL_YAML)
+        ticket = load_ticket(path)
+        ticket.graph_scope = {"nodes": [1, 2], "edges": []}
+        d = ticket.to_dict()
+        assert d["graph_scope"] == {"nodes": [1, 2], "edges": []}
+        reloaded = Ticket.from_dict(d)
+        assert reloaded.graph_scope == {"nodes": [1, 2], "edges": []}
+
+    def test_return_to_none_survives_round_trip(self, tmp_path):
+        """return_to=None defaults and survives to_dict/from_dict."""
+        path = _write(tmp_path, "TASK-001.yaml", MINIMAL_YAML)
+        ticket = load_ticket(path)
+        assert ticket.return_to is None
+        d = ticket.to_dict()
+        assert d["return_to"] is None
+        reloaded = Ticket.from_dict(d)
+        assert reloaded.return_to is None
+
+    def test_return_to_non_null_survives_round_trip(self, tmp_path):
+        """return_to with value survives to_dict/from_dict."""
+        path = _write(tmp_path, "TASK-001.yaml", MINIMAL_YAML)
+        ticket = load_ticket(path)
+        ticket.return_to = "parent-ticket-id"
+        d = ticket.to_dict()
+        assert d["return_to"] == "parent-ticket-id"
+        reloaded = Ticket.from_dict(d)
+        assert reloaded.return_to == "parent-ticket-id"
