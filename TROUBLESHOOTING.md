@@ -212,3 +212,32 @@ TS-XXX:
 **Permanent Fix**: Add path validation in child_agent.py exec_python tool to ensure path starts with `output/`. Add test case in conftest.py to verify path restriction.  
 **Prevention**: Document path restriction in tickets/template.yaml comments; add path prefix validation.  
 **Recurrence**: false — path restriction is intentional security feature
+
+---
+
+### TS-20260407-008: Integration Test JSONL Format Failure
+
+**Status**: RESOLVED ✅ 2026-04-07  
+**Context**: test_run_extraction_integration in tests/test_trajectory.py fails because trajectory_extractor cannot parse attempts log.  
+**Symptom**: `assert 0 == 1` — zero passes found in INT-001-attempts.jsonl  
+**Error Snippet**: 
+```
+[DEBUG] extract_trajectory: no pass found in ...logs\INT-001-attempts.jsonl
+```
+**Root Cause**: Test writes multi-line JSON string to JSONL file, creating invalid format. Each line in JSONL must be a complete, valid JSON object on a single line. The test code produces:
+```json
+{"outcome": "pass", "ticket_id": "INT-001", "elapsed_s": 2.0,
+ "tool_calls": 3, "tokens": 200, "tok_s": 100.0, "finish": "stop", "attempt": 1,
+ "ts": "2026-04-07T00:00:00"}
+```
+This is NOT valid JSONL (single JSON object split across lines).
+
+**Quick Fix**: Fix test to write valid JSONL — single JSON object per line:
+```python
+jsonl_path.write_text(
+    '{"outcome": "pass", "ticket_id": "INT-001", "elapsed_s": 2.0, "tool_calls": 3, "tokens": 200, "tok_s": 100.0, "finish": "stop", "attempt": 1, "ts": "2026-04-07T00:00:00"}\n'
+)
+```
+**Permanent Fix**: Update test_run_extraction_integration in tests/test_trajectory.py to use single-line JSON string.  
+**Prevention**: Review all JSONL test files for multi-line string formatting issues; add JSONL validation in test fixtures.  
+**Recurrence**: false — root cause identified and documented
