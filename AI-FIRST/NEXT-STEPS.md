@@ -60,6 +60,10 @@ The `next_entry_point` is the single source of truth for what to do next.
 **Entries written before STEP-07 do not have `anchor` — this is expected.**
 Do not backfill old entries. Write new entries with `anchor` from STEP-07-A onwards.
 
+> **Known schema debt:** The STEP-07-F journal entry has `anchor` as a flat string
+> rather than the required object. This is a known shortcut. The next journal entry
+> (STEP-08) must use the full object schema. Do not backfill.
+
 ---
 
 ## HALT Protocol
@@ -140,48 +144,50 @@ Adds schema validation, enum coercion, status aliasing, and a backward-compatibl
 
 ---
 
-### [ ] Step 7: Anchor Journal + TicketResult + Lint Gate + Delegate Spawn  ← ACTIVE
+### [x] DONE — Step 7: Anchor Journal + TicketResult + Lint Gate + Delegate Spawn
 **Spec:** `AI-FIRST/STEP-07-ANCHOR-SPAWN.md`  
 **Files:** `src/operator_v7.py`, `src/ticket_io.py`, `agent/runner.py`, `tools/delegate_task.py`,
 `AI-FIRST/AGENT-PERSONA.md`, `tests/test_ticket_io.py`, `tests/integration/test_delegate_task.py`  
-**Gate:** `pytest tests/ -v` → 167+ passed, 1 skipped, 0 failed + manual integration test  
+**Gate:** `pytest tests/ -v` ✅ 167 passed, 1 skipped, 0 failed  
 
-**Tickets (in order):**
-| Ticket | Task | Depends on |
+**What was built (sub-tickets completed in order):**
+
+| Ticket | Task | Status |
 |---|---|---|
-| STEP-07-A | Journal anchor schema + cold-start rule in AGENT-PERSONA.md | STEP-06 |
-| STEP-07-B | `TicketResult` dataclass in `operator_v7.py`; migrate `ticket.result` | STEP-07-A |
-| STEP-07-C | `lint_ticket()` in `ticket_io.py`; warn on violation; log to `lint-violations.jsonl` | STEP-07-B |
-| STEP-07-D | `tools/delegate_task.py` — shared-filesystem transport; register in REGISTRY | STEP-07-C |
-| STEP-07-E | Integration test (`tests/integration/`) — skipped by default, manual ZBook run | STEP-07-D |
-| STEP-07-F | Gate, journal (with anchor), commit, push | STEP-07-E |
+| STEP-07-A | Journal anchor schema + cold-start rule in AGENT-PERSONA.md | ✅ |
+| STEP-07-B | `TicketResult` dataclass in `operator_v7.py`; migrate `ticket.result` | ✅ |
+| STEP-07-C | `lint_ticket()` in `ticket_io.py`; warn on violation; log to `lint-violations.jsonl` | ✅ |
+| STEP-07-D | `tools/delegate_task.py` — shared-filesystem transport; register in REGISTRY | ✅ |
+| STEP-07-E | Integration test (`tests/integration/`) — skipped by default, manual ZBook run | ✅ |
+| STEP-07-F | Gate (167/1/0), journal entry, commit f10a53a, push | ✅ |
 
-**First principles rationale:**
-A ticket is a typed message, not a file. It can travel over any substrate.
-The ZBook is the minimum viable two-node mesh: parent (Key-Brain 80B) +
-child (OpenClaw A3B) on shared memory and shared filesystem.
-Anchors keep the parent cold between dispatches — critical on a machine
-where both models share RAM. TicketResult gives the child a typed return
-channel. Lint gate is pre-flight before the message leaves the parent's
-memory domain. delegate_task is the substrate abstraction layer.
-
-**What to watch for:**
-- `TicketResult` defaults to `None` in `ticket.result` for backward compat with old YAML
-- Lint gate warns, does NOT block — hard-fail comes in STEP-08 after false-positive audit
-- `delegate_task()` transport is ONLY in `tools/delegate_task.py` — zero transport logic
-  in runner.py or operator_v7.py
-- Integration test is SKIP-by-default — never run in automated gate
-- Journal entries from STEP-07-A onward MUST include `anchor` field
+**Known schema debt:** STEP-07-F journal entry has `anchor` as a flat string instead
+of the spec object. STEP-08 journal entry must use the full object. Do not backfill.
 
 ---
 
-### [ ] Step 8: Lint Hard-Fail + Multi-Ticket Chain (Preview — Do Not Build Yet)
-**What it does:**
-- After measuring lint false-positive rate from real runs, promote warn → hard-fail
-- Multi-ticket dependency chain with `delegate_task` — parent chains child tickets
-- Deadlock detection across spawned children
+### [ ] Step 8: Lint Hard-Fail + Multi-Ticket Chain  ← **NEXT**
+**Spec:** (to be written: `AI-FIRST/STEP-08-LINT-CHAIN.md`)  
+**Files:** `src/ticket_io.py`, `agent/runner.py`, `tests/test_ticket_io.py`  
+**Gate:** `pytest tests/ -v` green after hard-fail promotion + chain test
 
-**Prerequisite:** STEP-07 complete. Real ZBook integration test run with model loaded.
+**Tickets (in order):**
+| Ticket | Task |
+|---|---|
+| STEP-08-A | Audit lint false-positive rate from real runs → promote warn → hard-fail in `lint_ticket()` |
+| STEP-08-B | Multi-ticket dependency chain with `delegate_task` — parent chains child tickets |
+| STEP-08-C | Deadlock detection across spawned children |
+| STEP-08-D | Gate, journal (with full anchor object), commit, push |
+
+**Prerequisite:** STEP-07 complete. ✅ Real ZBook integration test run with model loaded
+required before promoting lint to hard-fail — measure false-positive rate first.
+
+**First principles rationale:** The lint gate was purposely warn-not-block in Step 7
+because the A3B child running cold might succeed even with a lint violation.
+After real-run data, we have the evidence to hard-fail with confidence.
+Multi-ticket chaining is the next level of the parent↔child protocol —
+Key-Brain fires a chain of dependent tickets and Fractal Claws manages ordering
+and result propagation.
 
 ---
 

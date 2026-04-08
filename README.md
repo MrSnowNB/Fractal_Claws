@@ -1,7 +1,7 @@
 ---
 title: Fractal Claws — Self-Healing Recursive Agent Harness
 version: "7.0"
-gate: "step-6-validated — 2026-04-08"
+gate: "step-7-validated — 2026-04-08"
 ---
 
 # Fractal Claws
@@ -17,9 +17,9 @@ entirely and runs the cached toolpath directly.
 
 **One harness. Two roles. Executable memory. No cloud. Any substrate.**
 
-> **Current gate (2026-04-08):** Steps 1–6 complete and validated.  
+> **Current gate (2026-04-08):** Steps 1–7 complete and validated.  
 > `pytest tests/ -v` → 167 passed, 1 skipped, 0 failed.  
-> Step 7 (Anchor Journal + TicketResult + Lint Gate + Delegate Spawn) is active.
+> Step 8 (Lint Hard-Fail + Multi-Ticket Chain) is next.
 
 ---
 
@@ -69,6 +69,49 @@ Human gives goal
 
 ---
 
+## Step 7 — What Was Built
+
+Step 7 completed the four pillars of the parent↔child dispatch loop:
+
+### A — Anchor Journal
+Every journal entry now carries an `anchor` object with three fields:
+- `system_state` — one sentence: what is true about the system right now
+- `open_invariants` — list of invariants that must remain true
+- `next_entry_point` — exactly what to do next and which file to touch first
+
+On cold start, Key-Brain reads **one line** — the last journal entry — and knows
+full system state. No spec re-reads, no file scans before the first ticket.
+
+### B — TicketResult Dataclass
+`TicketResult` lives in `src/operator_v7.py`. It is the typed return contract
+from child to parent: outcome, elapsed_s, tokens, tool_calls, artifact_paths,
+reason, and anchor. `ticket.result` migrated from `Dict` → `Optional[TicketResult]`.
+Backward compatible — old YAML files with no `result` field default to `None`.
+
+### C — Lint Gate
+`lint_ticket()` in `src/ticket_io.py` is the pre-flight check before any ticket
+leaves the parent's memory domain. Four rules:
+- LINT-001: task references `.py` file but `context_files` is empty
+- LINT-002: `produces`/`consumes` declared but `context_files` empty
+- LINT-003: `context_files` entry does not exist on disk
+- LINT-004: `task` is empty
+
+Violations warn (not block) and write to `logs/lint-violations.jsonl`.
+Hard-fail promotion comes in Step 8 after false-positive audit.
+
+### D — delegate_task Transport Layer
+`tools/delegate_task.py` is the **only** place transport logic lives.
+Currently: write ticket to `tickets/open/`, poll `tickets/closed/` for result.
+To swap substrate (e.g. LoRa serial): replace ~20 lines in this file only.
+The `Ticket.to_dict()` / `TicketResult.from_dict()` contract does not change.
+
+### E/F — Integration Test + Gate
+Integration tests live in `tests/integration/test_delegate_task.py`.
+Skipped by default in all automated runs. Run manually on ZBook with model loaded:
+`pytest tests/integration/ -v -s`
+
+---
+
 ## Components
 
 | Component | File | What it does |
@@ -85,7 +128,7 @@ Human gives goal
 | **Delegate** | `tools/delegate_task.py` | Substrate abstraction layer — swap for LoRa in ~20 lines |
 | **Skills** | `skills/<goal-class>.yaml` | Executable memory: winning toolpaths by goal class |
 | **Audit log** | `logs/<id>-attempts.jsonl` | Append-only; one JSON record per attempt |
-| **Journal** | `logs/luffy-journal.jsonl` | Luffy Law audit trail; anchor field for cold-start |
+| **Journal** | `logs/luffy-journal.jsonl` | Luffy Law audit trail; anchor field from Step 7 |
 | **Lint log** | `logs/lint-violations.jsonl` | Warnings from lint_ticket() — review before dispatch |
 
 ---
@@ -100,8 +143,8 @@ Human gives goal
 | 4 | Trajectory Extractor + skills/ | `pytest tests/test_trajectory.py` 13/13 | ✅ DONE |
 | 5 | Full Typed Field Migration | `pytest tests/ -v` + zero grep hits | ✅ DONE |
 | 6 | Skill-Aware Decomposition | `pytest tests/ -v` 167 passed | ✅ DONE |
-| 7 | Anchor + TicketResult + Lint + Delegate | `pytest tests/ -v` + manual integration | 🔥 ACTIVE |
-| 8 | Lint Hard-Fail + Multi-Ticket Chain | TBD | ⏳ Queued |
+| 7 | Anchor + TicketResult + Lint + Delegate | `pytest tests/ -v` 167 passed, 1 skipped | ✅ DONE |
+| 8 | Lint Hard-Fail + Multi-Ticket Chain | TBD | ⏳ NEXT |
 | 9 | Graphify — Knowledge Graph Index | TBD | ⏳ Queued |
 
 ---
@@ -165,6 +208,9 @@ Journal entry schema (STEP-07+):
 }
 ```
 
+> **Note:** The STEP-07-F journal entry has `anchor` as a flat string (legacy format).
+> All entries from STEP-08 onward must use the full anchor object schema above.
+
 ---
 
 ## First Principles
@@ -196,7 +242,7 @@ Fractal_Claws/
 │   ├── STEP-04-TRAJECTORY.md
 │   ├── STEP-05-RUNNER-MIGRATION.md
 │   ├── STEP-06-SKILL-DECOMP.md
-│   └── STEP-07-ANCHOR-SPAWN.md  ← Active spec
+│   └── STEP-07-ANCHOR-SPAWN.md  ← Complete — kept for reference
 ├── .clinerules/                 ← Cline rule files (parent config)
 ├── agent/
 │   └── runner.py                ← Decompose + drain + skill cache + delegate dispatch
@@ -214,7 +260,7 @@ Fractal_Claws/
 ├── tools/
 │   ├── registry.py              ← Dynamic tool registry (Step 2 ✅)
 │   ├── terminal.py              ← subprocess wrapper + denylist; win32-safe (Step 2 ✅)
-│   ├── delegate_task.py         ← Substrate abstraction — dispatch to child (Step 7 🔥)
+│   ├── delegate_task.py         ← Substrate abstraction — dispatch to child (Step 7 ✅)
 │   ├── read_file.py
 │   └── write_file.py
 ├── tests/
@@ -250,7 +296,7 @@ Fractal_Claws/
 | Step 4 — trajectory | `pytest tests/test_trajectory.py -v` | ✅ 13/13 |
 | Step 5 — typed migration | `pytest tests/ -v` + zero grep hits | ✅ |
 | Step 6 — skill cache | `pytest tests/ -v` 167 passed | ✅ |
-| Step 7 — anchor+spawn | `pytest tests/ -v` + manual integration | 🔥 ACTIVE |
+| Step 7 — anchor+spawn | `pytest tests/ -v` 167 passed, 1 skipped | ✅ |
 | Full suite | `pytest tests/ -v` | ✅ 167 passed, 1 skipped |
 
 ---
