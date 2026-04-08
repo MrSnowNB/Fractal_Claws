@@ -37,6 +37,9 @@ import subprocess
 from pathlib import Path
 from openai import OpenAI
 
+from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
+from tools.terminal import run_command
+
 
 # ── config ────────────────────────────────────────────────────────────────────
 
@@ -65,6 +68,72 @@ for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR, IN_PROG_DIR, EXEC_SANDBOX, LOG_DIR]:
     os.makedirs(d, exist_ok=True)
 
 client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
+
+
+# ── tools (must be defined before REGISTRY) ────────────────────────────────────
+
+def tool_read_file(path: str) -> str:
+    if not os.path.exists(path):
+        return f"ERROR: file not found: {path}"
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def tool_write_file(path: str, content: str) -> str:
+    if path.endswith(".py") and os.path.dirname(path) == "":
+        original_path = path
+        path = os.path.join("output", path)
+        print(f"  [tool] auto-sandbox: {original_path} → {path}")
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"OK: wrote {len(content)} bytes to {path}"
+
+
+def tool_list_dir(path: str) -> str:
+    if not os.path.exists(path):
+        return f"ERROR: directory not found: {path}"
+    entries = sorted(os.listdir(path))
+    if not entries:
+        return f"EMPTY: {path}"
+    return "\n".join(entries)
+
+
+def tool_exec_python(path: str, timeout: int = 30) -> str:
+    abs_path    = os.path.abspath(path)
+    abs_sandbox = os.path.abspath(EXEC_SANDBOX)
+    if not abs_path.startswith(abs_sandbox):
+        return f"ERROR: exec_python blocked — path must be inside {EXEC_SANDBOX}/ (got {path})"
+    if not os.path.exists(abs_path):
+        return f"ERROR: file not found: {path}"
+    try:
+        result = subprocess.run(
+            [sys.executable, abs_path],
+            capture_output=True, text=True, timeout=timeout
+        )
+        lines = []
+        if result.stdout.strip():
+            lines.append(f"STDOUT:\n{result.stdout.strip()}")
+        if result.stderr.strip():
+            lines.append(f"STDERR:\n{result.stderr.strip()}")
+        lines.append(f"returncode: {result.returncode}")
+        return "\n".join(lines)
+    except subprocess.TimeoutExpired:
+        return f"ERROR: exec_python timed out after {timeout}s"
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+# ── module-level registry ───────────────────────────────────────────────────────
+
+REGISTRY = ToolRegistry()
+REGISTRY.register("read_file",   tool_read_file,   {"path": {"type": str}})
+REGISTRY.register("write_file",  tool_write_file,  {"path": {"type": str}, "content": {"type": str}})
+REGISTRY.register("list_dir",    tool_list_dir,    {"path": {"type": str}})
+REGISTRY.register("exec_python", tool_exec_python, {"path": {"type": str}})
+REGISTRY.register("run_command", run_command,      {"cmd": {"type": list}})
 
 
 # ── token budget ──────────────────────────────────────────────────────────────
@@ -271,62 +340,6 @@ def call_model(messages: list, budget: int) -> tuple:
     raise RuntimeError(f"model call failed after {MAX_RETRIES + 1} attempts")
 
 
-# ── tools ────────────────────────────────────────────────────────────────────
-
-def tool_read_file(path: str) -> str:
-    if not os.path.exists(path):
-        return f"ERROR: file not found: {path}"
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
-
-
-def tool_write_file(path: str, content: str) -> str:
-    if path.endswith(".py") and os.path.dirname(path) == "":
-        original_path = path
-        path = os.path.join("output", path)
-        print(f"  [tool] auto-sandbox: {original_path} → {path}")
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    return f"OK: wrote {len(content)} bytes to {path}"
-
-
-def tool_list_dir(path: str) -> str:
-    if not os.path.exists(path):
-        return f"ERROR: directory not found: {path}"
-    entries = sorted(os.listdir(path))
-    if not entries:
-        return f"EMPTY: {path}"
-    return "\n".join(entries)
-
-
-def tool_exec_python(path: str, timeout: int = 30) -> str:
-    abs_path    = os.path.abspath(path)
-    abs_sandbox = os.path.abspath(EXEC_SANDBOX)
-    if not abs_path.startswith(abs_sandbox):
-        return f"ERROR: exec_python blocked — path must be inside {EXEC_SANDBOX}/ (got {path})"
-    if not os.path.exists(abs_path):
-        return f"ERROR: file not found: {path}"
-    try:
-        result = subprocess.run(
-            [sys.executable, abs_path],
-            capture_output=True, text=True, timeout=timeout
-        )
-        lines = []
-        if result.stdout.strip():
-            lines.append(f"STDOUT:\n{result.stdout.strip()}")
-        if result.stderr.strip():
-            lines.append(f"STDERR:\n{result.stderr.strip()}")
-        lines.append(f"returncode: {result.returncode}")
-        return "\n".join(lines)
-    except subprocess.TimeoutExpired:
-        return f"ERROR: exec_python timed out after {timeout}s"
-    except Exception as e:
-        return f"ERROR: {e}"
-
-
 # ── parser ────────────────────────────────────────────────────────────────────
 
 _HEADER_RE = re.compile(r'^[ \t]+(TOOL:|PATH:|END$|DONE$)', re.MULTILINE)
@@ -336,7 +349,7 @@ def normalise(text: str) -> str:
 
 
 BLOCK_RE = re.compile(
-    r'TOOL:\s*(\S+)\s*\nPATH:\s*(\S+)\s*\n(?:CONTENT:\n([\s\S]*?)\nEND|END)',
+    r'TOOL:\s*(\S+)\s*\nPATH:\s*(.+?)\s*\n(?:CONTENT:\n([\s\S]*?)\nEND|END)',
     re.MULTILINE
 )
 
@@ -348,17 +361,18 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
         path    = match.group(2).strip()
         content = match.group(3)
         print(f"  [tool] {tool} → {path}")
-        if tool == "read_file":
-            result = tool_read_file(path)
-        elif tool == "write_file":
-            result = tool_write_file(path, content or "")
-        elif tool == "list_dir":
-            result = tool_list_dir(path)
-        elif tool == "exec_python":
-            result = tool_exec_python(path, timeout=exec_timeout)
-        else:
-            result = f"ERROR: unknown tool: {tool}"
-        print(f"  [tool] result: {result[:120]}")
+        try:
+            if tool == "write_file":
+                result = REGISTRY.call(tool, {"path": path, "content": content or ""})
+            elif tool == "run_command":
+                result = REGISTRY.call(tool, {"cmd": path.split()})
+            else:
+                result = REGISTRY.call(tool, {"path": path})
+        except (ToolNotFoundError, ToolArgError) as e:
+            result = f"ERROR: {e}"
+        # run_command returns dict; convert to string for logging
+        result_str = str(result) if isinstance(result, dict) else result
+        print(f"  [tool] result: {result_str[:120]}")
         results.append((tool, path, result))
     return results
 
