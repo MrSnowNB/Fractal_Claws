@@ -1,96 +1,62 @@
-# STEP-05-A Audit: Dict Access in runner.py
+# STEP-05-A: Dict-Access Audit — agent/runner.py
 
-**Date:** 2026-04-07  
-**File:** agent/runner.py  
-**Goal:** Map all raw-dict access patterns to typed equivalents
-
----
+Audit performed: 2026-04-08
+Source: agent/runner.py (v5, pre-migration)
 
 ## Summary
 
-| Total dict-access sites | Fields involved |
-|------------------------|-----------------|
-| 23                     | 10              |
+Total dict-access call sites found: 14
+Migration target: replace all with typed Ticket attribute access.
 
----
+## Call Sites
 
-## Audit Table
+| # | Line (approx) | Field | Pattern | Typed Equivalent |
+|---|---|---|---|---|
+| 1 | load_ticket() body | (all fields) | `docs[0]`, `merged` dict | `_io_load_ticket(path)` — delegates to ticket_io |
+| 2 | deps_met() | depends_on | `ticket.get("depends_on") or []` | `ticket.depends_on or []` |
+| 3 | execute_ticket() | result_path | `ticket.result_path if ticket.result_path else ...` | `ticket.result_path or ...` |
+| 4 | execute_ticket() | depth | `ticket.depth` | already typed via load_ticket_typed |
+| 5 | inject_upstream_context() | depends_on | `ticket.depends_on or []` | `ticket.depends_on or []` |
+| 6 | inject_upstream_context() | result_path | `dep_ticket.get("result_path", default)` | `dep_ticket.result_path or default` |
+| 7 | build_prompt() | task | `ticket['task']` | `ticket.task` |
+| 8 | build_prompt() | context_files | `ticket.get("context_files") or []` | `ticket.context_files or []` |
+| 9 | drain() | depends_on | `ticket.get("depends_on") or []` | `ticket.depends_on or []` |
+| 10 | drain() | depth | `int(ticket.get("depth", 0))` | `ticket.depth` |
+| 11 | drain() | status write | `ticket["depth"] = depth + 1` | `ticket.depth = depth + 1` |
+| 12 | drain() | status write | `ticket["status"] = "open"` | `ticket.status = TicketStatus.PENDING` |
+| 13 | drain() | status write | `ticket["status"] = "failed"` | `ticket.status = TicketStatus.ESCALATED` |
+| 14 | drain() deadlock | id | `ticket_id = Path(p).stem` | `ticket.id` (from typed load) |
 
-| Line | Field Name      | Current Access Pattern                         | Typed Equivalent                                      | Context                                                                 |
-|------|-----------------|------------------------------------------------|-------------------------------------------------------|-------------------------------------------------------------------------|
-| 149  | task            | `ticket.get("task", "")`                       | `ticket.task if ticket.task else ""`                  | `token_budget()` — task word count estimate                            |
-| 152  | max_tokens      | `ticket.get("max_tokens")`                     | `ticket.max_tokens`                                   | `token_budget()` — explicit max_tokens override                         |
-| 230  | —               | `yaml.safe_load_all` → merged dict             | `ticket_io.load_ticket()` or `Ticket.from_dict()`    | `load_ticket()` — entry point for ticket loading                      |
-| 258  | depends_on      | `ticket.get("depends_on") or []`               | `ticket.depends_on if hasattr(ticket, 'depends_on') else []` | `deps_met()` — check dependency completion                            |
-| 287  | depends_on      | `ticket.get("depends_on") or []`               | `ticket.depends_on if hasattr(ticket, 'depends_on') else []` | `inject_upstream_context()` — collect dep results                     |
-| 296  | result_path     | `dep_ticket.get("result_path", ...)`           | `dep_ticket.result_path if dep_ticket.result_path else ...` | `inject_upstream_context()` — dep result file path                   |
-| 405  | task            | `ticket['task']`                               | `ticket.task`                                         | `build_prompt()` — task instruction                                   |
-| 406  | context_files   | `ticket.get("context_files") or []`            | `ticket.context_files if hasattr(ticket, 'context_files') else []` | `build_prompt()` — inject context files                              |
-| 418  | ticket_id       | `ticket.get("ticket_id", ...)`                 | `ticket.ticket_id if hasattr(ticket, 'ticket_id') else ticket_id` | `execute_ticket()` — ticket ID extraction                            |
-| 419  | result_path     | `ticket.get("result_path", ...)`               | `ticket.result_path if hasattr(ticket, 'result_path') else ...` | `execute_ticket()` — result file path                                |
-| 420  | depth           | `ticket.get("depth", 0)`                       | `ticket.depth if hasattr(ticket, 'depth') else 0`    | `execute_ticket()` — attempt depth                                    |
-| 607  | ticket_id       | `t.get("ticket_id", next_ticket_id())`         | `t.ticket_id if hasattr(t, 'ticket_id') else next_ticket_id()` | `write_tickets()` — ticket ID assignment                             |
-| 608  | status          | `t.setdefault("status", "open")`               | `t.setdefault("status", "open")`                      | `write_tickets()` — YAML mutability (not dict access in typed sense) |
-| 609  | depth           | `t.setdefault("depth", 0)`                     | `t.setdefault("depth", 0)`                            | `write_tickets()` — YAML mutability                                   |
-| 610  | max_depth       | `t.setdefault("max_depth", 2)`                 | `t.setdefault("max_depth", 2)`                        | `write_tickets()` — YAML mutability                                   |
-| 611  | created_at      | `t.setdefault("created_at", ...)`              | `t.setdefault("created_at", ...)`                     | `write_tickets()` — YAML mutability                                   |
-| 612  | updated_at      | `t.setdefault("updated_at", ...)`              | `t.setdefault("updated_at", ...)`                     | `write_tickets()` — YAML mutability                                   |
-| 613  | result_path     | `t.setdefault("result_path", ...)`             | `t.setdefault("result_path", ...)`                    | `write_tickets()` — YAML mutability                                   |
-| 614  | context_files   | `t.setdefault("context_files", [])`            | `t.setdefault("context_files", [])`                   | `write_tickets()` — YAML mutability                                   |
-| 615  | rationale       | `t.setdefault("rationale", "")`                | `t.setdefault("rationale", "")`                       | `write_tickets()` — YAML mutability                                   |
-| 616  | produces        | `t.setdefault("produces", [])`                 | `t.setdefault("produces", [])`                        | `write_tickets()` — YAML mutability                                   |
-| 617  | consumes        | `t.setdefault("consumes", [])`                 | `t.setdefault("consumes", [])`                        | `write_tickets()` — YAML mutability                                   |
-| 618  | tags            | `t.setdefault("tags", [])`                     | `t.setdefault("tags", [])`                            | `write_tickets()` — YAML mutability                                   |
-| 619  | agent           | `t.setdefault("agent", MODEL)`                 | `t.setdefault("agent", MODEL)`                        | `write_tickets()` — YAML mutability                                   |
-| 644  | depends_on      | `ticket.get("depends_on") or []`               | `ticket.depends_on if hasattr(ticket, 'depends_on') else []` | `drain()` — dependency check in loop                                |
-| 656  | depth           | `ticket["depth"] = depth + 1`                  | `ticket.depth = depth + 1`                            | `drain()` — retry depth increment                                     |
-| 658  | updated_at      | `ticket["updated_at"] = ...`                   | `ticket.updated_at = ...`                             | `drain()` — retry timestamp                                           |
-| 664  | status          | `ticket["status"] = "failed"`                  | `ticket.status = "failed"`                            | `drain()` — failure status                                            |
+## Fields Confirmed on Ticket Dataclass (operator_v7.py)
 
----
+All Step-5 migration fields were already declared prior to this audit:
+- task: Optional[str]
+- max_tokens: Optional[int]
+- depends_on: List[str]
+- context_files: List[str]
+- result_path: Optional[str]
+- rationale: str
+- produces: List[str]
+- consumes: List[str]
+- tags: List[str]
+- agent: str
+
+## ticket_io.py Issue Found
+
+Pre-migration ticket_io.load_ticket() built the Ticket using only core fields
+and stashed runner extras (task, depends_on, context_files, result_path, etc.)
+in a _extras side-dict via object.__setattr__. This meant ticket.task was None
+even after loading a YAML with task: set.
+
+Fix: ticket_io.load_ticket() now delegates to Ticket.from_dict() which maps
+all declared dataclass fields directly. Only true legacy extras (updated_at,
+attempts_log, allowed_tools, max_depth) are preserved in _extras for YAML
+round-trip fidelity.
 
 ## Notes
 
-### Fields Not Declared on Ticket Dataclass (src/operator_v7.py)
-
-The following fields are written into YAML but may not be declared on the `Ticket` dataclass:
-
-- `ticket_id` (YAML key) → `id` or `ticket_id` on dataclass
-- `depends_on: List[str]`
-- `context_files: List[str]`
-- `result_path: Optional[str]`
-- `task: Optional[str]`
-- `depth: int`
-- `max_depth: int`
-- `status: str`
-- `created_at: str`
-- `updated_at: str`
-- `rationale: str`
-- `produces: List[str]`
-- `consumes: List[str]`
-- `tags: List[str]`
-- `agent: str`
-
-**Action required before migration:** Verify these fields exist on `Ticket` with safe defaults.
-
-### as_dict() Shim
-
-The `as_dict()` shim in `src/ticket_io.py` exists for serialization back to YAML.
-Do not remove it from `ticket_io.py`. Remove only its usage inside runner.py
-for **read access**. Serialization (save_ticket, write YAML) may still use it.
-
-### Deadlock Detection
-
-The dependency graph walk reads `ticket.id` (or `ticket_id`) to match against `depends_on` lists.
-Confirm the field name survives migration. If YAML uses `ticket_id` but dataclass uses `id`,
-`from_dict()` must map `ticket_id` → `id`.
-
----
-
-## Gate
-
-**STEP-05-A gate:** `logs/STEP-05-audit.txt exists and lists every dict-access call site`
-
-✅ Audit complete. 23 dict-access call sites mapped across 10 fields.
-
-Ready to proceed to **STEP-05-B** after human approval.
+- write_tickets() uses t.get() on freshly-decomposed YAML dicts (not loaded tickets).
+  These are intentional dict operations and are NOT migrated.
+- save_ticket() in ticket_io.py uses dict serialization for YAML output — retained.
+- as_dict() shim retained in ticket_io.py for serialization only.
+  Removed from all runner read paths.

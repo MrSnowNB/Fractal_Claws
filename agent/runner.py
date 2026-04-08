@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-runner.py — Fractal Claws agent skeleton v5
+runner.py — Fractal Claws agent skeleton v6
 
 Single entry point. Reads all config from settings.yaml.
 No model names, no depths, no tiers hardcoded here.
@@ -24,6 +24,12 @@ Handoff logging (v5):
      "tokens": N, "elapsed_s": N, "finish": "stop|length|...",
      "budget": N, "tool_calls": N, "reason": "..."}
     This log is the audit trail for parent verification and triage.
+
+Migration note (v6 — STEP-05):
+    All ticket dict-access (ticket.get / ticket[key]) has been replaced with
+    typed Ticket attribute access (ticket.field). The local load_ticket() now
+    delegates to src.ticket_io.load_ticket() and returns a Ticket dataclass.
+    Zero raw-dict reads remain in the runner logic paths.
 """
 
 import os
@@ -40,7 +46,8 @@ from openai import OpenAI
 from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
 from tools.terminal import run_command
 
-from src.ticket_io import load_ticket as load_ticket_typed
+from src.ticket_io import load_ticket as _io_load_ticket
+from src.operator_v7 import Ticket
 
 
 # ── config ────────────────────────────────────────────────────────────────────
@@ -147,8 +154,7 @@ BUDGET_FLOOR    = 1024
 
 WORDS_PER_TOKEN = 0.75
 
-def token_budget(ticket: "Ticket") -> int:
-    from src.operator_v7 import Ticket
+def token_budget(ticket: Ticket) -> int:
     task_words = len(str(ticket.task or "").split())
     estimate   = int(task_words / WORDS_PER_TOKEN * 24)
     budget     = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
@@ -229,20 +235,26 @@ def append_attempt_log(ticket_id: str, attempt: int, outcome: str,
 
 # ── ticket helpers ────────────────────────────────────────────────────────────
 
-def load_ticket(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        docs = list(yaml.safe_load_all(f))
-    if len(docs) == 2:
-        merged = docs[0] or {}
-        merged.update(docs[1] or {})
-        return merged
-    return docs[0] or {}
+def load_ticket(path: str) -> Ticket:
+    """Load a YAML ticket and return a fully-populated typed Ticket dataclass.
+
+    Delegates to src.ticket_io.load_ticket() for schema validation, default
+    injection, and Ticket.from_dict() construction.  Zero dict-access in
+    runner logic paths — callers use ticket.field attribute access only.
+    """
+    return _io_load_ticket(path)
 
 
-def save_ticket(path: str, ticket: dict) -> None:
-    os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(ticket, f, allow_unicode=True, sort_keys=False)
+def save_ticket(path: str, ticket) -> None:
+    """Write ticket to YAML. Accepts Ticket dataclass or plain dict (decompose path)."""
+    from src.ticket_io import save_ticket as _io_save_ticket
+    if isinstance(ticket, Ticket):
+        _io_save_ticket(path, ticket)
+    else:
+        # Raw dict from decompose_goal — write directly
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.dump(ticket, f, allow_unicode=True, sort_keys=False)
 
 
 def scan_open() -> list:
@@ -257,8 +269,7 @@ def is_failed(ticket_id: str) -> bool:
     return os.path.exists(os.path.join(FAIL_DIR, f"{ticket_id}.yaml"))
 
 
-def deps_met(ticket: "Ticket") -> bool:
-    from src.operator_v7 import Ticket
+def deps_met(ticket: Ticket) -> bool:
     return all(is_closed(d) for d in (ticket.depends_on or []))
 
 
@@ -287,8 +298,7 @@ def result_summary(result_path: str) -> str:
     return content.strip()[:800]
 
 
-def inject_upstream_context(ticket: "Ticket") -> str:
-    from src.operator_v7 import Ticket
+def inject_upstream_context(ticket: Ticket) -> str:
     deps = ticket.depends_on or []
     if not deps:
         return ""
@@ -298,7 +308,7 @@ def inject_upstream_context(ticket: "Ticket") -> str:
         if not os.path.exists(closed_path):
             continue
         dep_ticket  = load_ticket(closed_path)
-        result_path = dep_ticket.get("result_path", f"{LOG_DIR}/{dep_id}-result.txt")
+        result_path = dep_ticket.result_path or f"{LOG_DIR}/{dep_id}-result.txt"
         summary     = result_summary(result_path)
         if summary:
             blocks.append(f"--- output of {dep_id} ---\n{summary}")
@@ -375,7 +385,6 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
                 result = REGISTRY.call(tool, {"path": path})
         except (ToolNotFoundError, ToolArgError) as e:
             result = f"ERROR: {e}"
-        # run_command returns dict; convert to string for logging
         result_str = str(result) if isinstance(result, dict) else result
         print(f"  [tool] result: {result_str[:120]}")
         results.append((tool, path, result))
@@ -405,10 +414,10 @@ END
 """
 
 
-def build_prompt(ticket: dict, upstream_context: str) -> str:
+def build_prompt(ticket: Ticket, upstream_context: str) -> str:
     prompt  = TOOL_SYNTAX
-    prompt += f"\nTask: {ticket['task']}"
-    for cf in (ticket.get("context_files") or []):
+    prompt += f"\nTask: {ticket.task}"
+    for cf in (ticket.context_files or []):
         content = tool_read_file(cf)
         prompt += f"\n\n--- {cf} ---\n{content}"
     if upstream_context.strip():
@@ -419,11 +428,11 @@ def build_prompt(ticket: dict, upstream_context: str) -> str:
 # ── execute one ticket ────────────────────────────────────────────────────────
 
 def execute_ticket(ticket_path: str) -> bool:
-    ticket    = load_ticket_typed(ticket_path)
-    ticket_id = ticket.id
-    result_path = ticket.result_path if ticket.result_path else f"{LOG_DIR}/{ticket_id}-result.txt"
-    depth     = ticket.depth
-    attempt_n = depth + 1
+    ticket      = load_ticket(ticket_path)
+    ticket_id   = ticket.id
+    result_path = ticket.result_path or f"{LOG_DIR}/{ticket_id}-result.txt"
+    depth       = ticket.depth
+    attempt_n   = depth + 1
 
     print(f"\n[runner] ── {ticket_id} (attempt {attempt_n}) ──")
 
@@ -470,9 +479,11 @@ def execute_ticket(ticket_path: str) -> bool:
                   hw_pre, hw_post, tool_results, reason, raw_full=raw)
 
     if passed:
-        ticket["status"]       = "closed"
-        ticket["updated_at"]   = time.strftime("%Y-%m-%dT%H:%M:%S")
-        ticket["attempts_log"] = f"{LOG_DIR}/{ticket_id}-attempts.jsonl"
+        ticket.status = __import__("src.operator_v7", fromlist=["TicketStatus"]).TicketStatus.CLOSED
+        extras = getattr(ticket, "_extras", {})
+        extras["updated_at"]   = time.strftime("%Y-%m-%dT%H:%M:%S")
+        extras["attempts_log"] = f"{LOG_DIR}/{ticket_id}-attempts.jsonl"
+        object.__setattr__(ticket, "_extras", extras)
         dest = os.path.join(CLOSED_DIR, os.path.basename(ticket_path))
         save_ticket(dest, ticket)
         if os.path.exists(ticket_path):
@@ -488,9 +499,9 @@ def _evaluate(result_path: str, tool_results: list) -> tuple:
     if not tool_results:
         return False, "no tool calls detected"
     for tool, path, result in tool_results:
-        if result.startswith("ERROR:"):
+        if isinstance(result, str) and result.startswith("ERROR:"):
             return False, f"{tool}:{path} → {result[:80]}"
-        if "returncode:" in result:
+        if isinstance(result, str) and "returncode:" in result:
             rc = re.search(r'returncode:\s*(\d+)', result)
             if rc and rc.group(1) != "0":
                 return False, f"non-zero returncode: {rc.group(1)}"
@@ -519,7 +530,7 @@ def _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
     ]
     if tool_results:
         for tool, path, result in tool_results:
-            lines += [f"[{tool}] {path}", result, ""]
+            lines += [f"[{tool}] {path}", str(result), ""]
     else:
         lines += ["no tool calls detected", ""]
     lines += [
@@ -643,30 +654,34 @@ def drain(once: bool = False) -> None:
 
         for ticket_path in tickets:
             ticket    = load_ticket(ticket_path)
-            ticket_id = Path(ticket_path).stem
+            ticket_id = ticket.id
 
             if not deps_met(ticket):
-                unmet = [d for d in (ticket.get("depends_on") or [])
+                unmet = [d for d in (ticket.depends_on or [])
                          if not is_closed(d)]
                 print(f"[runner] deferred {ticket_id} — waiting on {unmet}")
                 deferred.append(ticket_path)
                 continue
 
             dispatched_this_pass += 1
-            depth  = int(ticket.get("depth", 0))
+            depth  = ticket.depth
             passed = execute_ticket(ticket_path)
 
             if not passed:
                 if depth < max_depth:
-                    ticket["depth"]      = depth + 1
-                    ticket["status"]     = "open"
-                    ticket["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                    ticket.depth = depth + 1
+                    extras = getattr(ticket, "_extras", {})
+                    extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                    object.__setattr__(ticket, "_extras", extras)
                     save_ticket(ticket_path, ticket)
                     print(f"[runner] retry queued depth={depth+1}: {ticket_id}")
                 else:
                     fail_path = os.path.join(FAIL_DIR, os.path.basename(ticket_path))
-                    ticket["status"]     = "failed"
-                    ticket["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                    from src.operator_v7 import TicketStatus
+                    ticket.status = TicketStatus.ESCALATED
+                    extras = getattr(ticket, "_extras", {})
+                    extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                    object.__setattr__(ticket, "_extras", extras)
                     save_ticket(fail_path, ticket)
                     if os.path.exists(ticket_path):
                         os.remove(ticket_path)
@@ -679,15 +694,15 @@ def drain(once: bool = False) -> None:
             print(f"[runner] blocked — {len(deferred)} ticket(s) cannot proceed:")
             for p in deferred:
                 ticket    = load_ticket(p)
-                ticket_id = Path(p).stem
-                unmet     = [d for d in (ticket.get("depends_on") or [])
-                             if not is_closed(d)]
-                failed_deps  = [d for d in unmet if is_failed(d)]
-                missing_deps = [d for d in unmet
-                                if not is_failed(d)
-                                and not os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
-                open_deps    = [d for d in unmet
-                                if os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
+                ticket_id = ticket.id
+                unmet         = [d for d in (ticket.depends_on or [])
+                                 if not is_closed(d)]
+                failed_deps   = [d for d in unmet if is_failed(d)]
+                missing_deps  = [d for d in unmet
+                                 if not is_failed(d)
+                                 and not os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
+                open_deps     = [d for d in unmet
+                                 if os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
                 if failed_deps:
                     print(f"  {ticket_id}: UPSTREAM FAILED → {failed_deps} exhausted retries")
                 elif missing_deps:

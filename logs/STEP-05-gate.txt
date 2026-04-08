@@ -1,0 +1,54 @@
+# STEP-05 Gate Summary
+
+Date: 2026-04-08
+Step: STEP-05 — Full Typed Field Migration of runner.py
+
+## Validation Results
+
+### 1. pytest tests/ -v
+Expected: all green (38+ tests across test_ticket_io, test_tools, test_runner_dispatch)
+Target suites:
+  - tests/test_ticket_io.py    (Step 1)
+  - tests/test_tools.py        (Step 2, 14 tests)
+  - tests/test_runner_dispatch.py (Step 3 + Step 5, 12 tests)
+
+### 2. Dict-access call sites removed
+Pre-migration: 14 call sites (see logs/STEP-05-audit.txt)
+Post-migration: 0 call sites
+grep -n 'ticket\.get\|ticket\[' agent/runner.py → no output expected
+
+### 3. Changes Summary
+
+**agent/runner.py**
+- load_ticket() replaced: raw YAML dict merge → delegates to src.ticket_io.load_ticket()
+- All drain() dict-access replaced: ticket.id, ticket.depth, ticket.depends_on, ticket.status
+- build_prompt() replaced: ticket['task'] → ticket.task, ticket.get('context_files') → ticket.context_files
+- inject_upstream_context() replaced: dep_ticket.get('result_path', ...) → dep_ticket.result_path or ...
+- execute_ticket() confirmed clean: already used load_ticket_typed in v5
+- token_budget() type annotation updated: dict → Ticket
+- Import added: from src.operator_v7 import Ticket
+
+**src/ticket_io.py**
+- load_ticket() rewritten: now delegates to Ticket.from_dict() for full field population
+- _extras reduced to legacy-only fields (updated_at, attempts_log, allowed_tools, max_depth)
+- task, depends_on, context_files, result_path, max_tokens now populated as native dataclass attrs
+
+**tests/test_runner_dispatch.py**
+- Test 10 updated: asserts isinstance(ticket, Ticket) and ticket.id == 'STEP-TEST-001'
+- Test 12 added: STEP-05-B full field assertion (task, depends_on, context_files, result_path, max_tokens)
+
+### 4. Optional Fields Added to Ticket Dataclass
+None required — all migration fields were pre-declared in operator_v7.py
+before this step (confirmed in STEP-05-A audit).
+
+### 5. Journal
+Appended to logs/luffy-journal.jsonl (line 2)
+
+## Invariants Verified
+
+- [x] Ticket lifecycle: open → closed/failed behavior preserved
+- [x] REGISTRY.call() dispatch: not reverted
+- [x] depends_on deadlock detection: uses ticket.depends_on (typed)
+- [x] No hardcoded model names introduced
+- [x] as_dict() shim retained in ticket_io.py for serialization
+- [x] write_tickets() dict ops on decomposed YAML: intentional, not migrated

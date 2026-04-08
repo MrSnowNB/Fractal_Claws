@@ -1,4 +1,4 @@
-"""tests/test_runner_dispatch.py — Dispatch and ticket_io tests for STEP-03-B."""
+"""tests/test_runner_dispatch.py — Dispatch and ticket_io tests for STEP-03-B / STEP-05-B."""
 import os
 import sys
 import tempfile
@@ -6,6 +6,7 @@ import pytest
 
 from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
 from tools.terminal import run_command
+from src.operator_v7 import Ticket
 
 # Import from agent.runner (the module-level REGISTRY is already instantiated)
 import agent.runner as runner_module
@@ -130,14 +131,16 @@ def test_parse_and_run_tools_unknown_tool_returns_error():
 # ── 10. test_typed_ticket_load ────────────────────────────────────────────────
 
 def test_typed_ticket_load(tmp_path):
-    """Write minimal ticket YAML. Import load_ticket. Assert ticket_id matches."""
+    """Write minimal ticket YAML. Assert load_ticket returns a Ticket instance with correct id."""
     from agent.runner import load_ticket
-    ticket_file = tmp_path / "test_ticket.yaml"
+    ticket_file = tmp_path / "STEP-TEST-001.yaml"
     ticket_file.write_text(
         "ticket_id: STEP-TEST-001\ntitle: Test ticket\nstatus: open\n"
     )
     ticket = load_ticket(str(ticket_file))
-    assert ticket["ticket_id"] == "STEP-TEST-001"
+    assert isinstance(ticket, Ticket), f"Expected Ticket, got {type(ticket)}"
+    assert ticket.id == "STEP-TEST-001"
+    assert ticket.title == "Test ticket"
 
 
 # ── 11. test_run_command_via_parse_and_run_tools ──────────────────────────────
@@ -150,3 +153,28 @@ def test_run_command_via_parse_and_run_tools():
     results = runner_module.parse_and_run_tools(response, exec_timeout=30)
     _, _, result = results[0]
     assert "hello" in result["stdout"]
+
+
+# ── 12. test_load_ticket_has_typed_fields ─────────────────────────────────────
+
+def test_load_ticket_has_typed_fields(tmp_path):
+    """STEP-05-B: load_ticket populates all Step-5 fields as typed attributes."""
+    from agent.runner import load_ticket
+    ticket_file = tmp_path / "STEP-FULL-001.yaml"
+    ticket_file.write_text(
+        "ticket_id: STEP-FULL-001\n"
+        "title: Full field test\n"
+        "status: open\n"
+        "task: Do something\n"
+        "depends_on: [STEP-FULL-000]\n"
+        "context_files: [output/foo.py]\n"
+        "result_path: logs/STEP-FULL-001-result.txt\n"
+        "max_tokens: 2048\n"
+    )
+    ticket = load_ticket(str(ticket_file))
+    assert isinstance(ticket, Ticket)
+    assert ticket.task == "Do something"
+    assert ticket.depends_on == ["STEP-FULL-000"]
+    assert ticket.context_files == ["output/foo.py"]
+    assert ticket.result_path == "logs/STEP-FULL-001-result.txt"
+    assert ticket.max_tokens == 2048

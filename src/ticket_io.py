@@ -18,17 +18,14 @@ ValidationWarning is logged (not raised) for non-critical field coercions.
 
 Backward compatibility
 ----------------------
-    load_ticket() returns a Ticket dataclass.
-    runner.py currently calls ticket.get("field") on raw dicts — callers
-    must be migrated to ticket.field attribute access. A shim is provided:
-
-        raw = ticket_io.as_dict(ticket)   # returns Ticket.to_dict() or passes dict through
-
-    This lets runner.py migrate field-by-field without a flag day.
+    load_ticket() returns a Ticket dataclass with all fields populated.
+    The as_dict() shim is preserved for serialization use cases only.
+    runner.py must use ticket.field attribute access — not ticket.get() or ticket[key].
 """
 
 from __future__ import annotations
 
+import copy
 import glob
 import logging
 import os
@@ -57,10 +54,9 @@ class ValidationWarning(UserWarning):
 # ── Required fields ───────────────────────────────────────────────────────────
 
 # Fields that MUST exist in a valid ticket YAML.
-# Missing required fields raise TicketIOError.
 _REQUIRED_FIELDS: frozenset[str] = frozenset({"ticket_id"})
 
-# Fields that are filled with safe defaults if absent (backward compat).
+# Fields filled with safe defaults if absent (backward compat).
 _DEFAULTS: dict = {
     "depth":         0,
     "parent":        None,
@@ -70,7 +66,6 @@ _DEFAULTS: dict = {
     "decrement":     3,
     "priority":      "medium",
     "result":        {},
-    # runner.py extras — stored in YAML but not in the dataclass; preserved in round-trip
     "title":         "",
     "task":          "",
     "rationale":     "",
@@ -93,7 +88,7 @@ def _read_yaml(path: str) -> dict:
     """
     Read a YAML file that may contain one or two documents.
     Two-document tickets (legacy runner format) are merged: doc[0] base,
-    doc[1] overlay (same merge logic as runner.py v5).
+    doc[1] overlay.
     """
     try:
         with open(path, "r", encoding="utf-8") as fh:
@@ -124,7 +119,6 @@ def _write_yaml(path: str, data: dict) -> None:
 
 def _coerce_status(value: object, ticket_id: str) -> TicketStatus:
     """Map raw string to TicketStatus; default to PENDING with a warning."""
-    # runner.py uses "open" / "closed" / "failed" — map to canonical values
     _ALIAS = {
         "open":   "pending",
         "failed": "escalated",
@@ -151,7 +145,10 @@ def _coerce_priority(value: object, ticket_id: str) -> TicketPriority:
 
 def load_ticket(path: str) -> Ticket:
     """
-    Load a YAML ticket file and return a validated Ticket dataclass.
+    Load a YAML ticket file and return a fully-populated Ticket dataclass.
+
+    All runner.py extras (task, depends_on, context_files, result_path, etc.)
+    are mapped directly onto the dataclass fields — no _extras side-channel.
 
     Raises
     ------
@@ -161,49 +158,27 @@ def load_ticket(path: str) -> Ticket:
     raw = _read_yaml(path)
 
     # Validate required fields
-    for field in _REQUIRED_FIELDS:
-        if field not in raw or raw[field] is None:
-            raise TicketIOError(f"missing required field '{field}' in {path}")
+    for fld in _REQUIRED_FIELDS:
+        if fld not in raw or raw[fld] is None:
+            raise TicketIOError(f"missing required field '{fld}' in {path}")
 
     ticket_id = str(raw["ticket_id"])
 
     # Apply defaults for any absent optional fields (non-destructive)
     for key, default in _DEFAULTS.items():
         if key not in raw:
-            import copy
             raw[key] = copy.deepcopy(default)
             logger.debug("[ticket_io] %s: defaulted %s=%r", ticket_id, key, default)
 
-    # Build the typed dataclass
-    ticket = Ticket(
-        id=ticket_id,
-        depth=int(raw.get("depth", 0)),
-        parent=raw.get("parent"),
-        children=list(raw.get("children") or []),
-        status=_coerce_status(raw.get("status"), ticket_id),
-        attempts=int(raw.get("attempts", 0)),
-        decrement=int(raw.get("decrement", 3)),
-        priority=_coerce_priority(raw.get("priority"), ticket_id),
-        result=dict(raw.get("result") or {}),
-        created_at=str(raw.get("created_at", time.strftime("%Y-%m-%dT%H:%M:%S"))),
-    )
+    # Use Ticket.from_dict() which maps all fields including Step-5 extras.
+    # from_dict() accepts both 'ticket_id' and 'id' keys.
+    ticket = Ticket.from_dict(raw)
 
-    # Attach runner.py extras as a passthrough dict so callers that still use
-    # ticket["field"] syntax can be migrated incrementally.
-    # These are NOT part of the canonical dataclass but must survive round-trips.
-    _RUNNER_EXTRAS = [
-        "title", "task", "rationale", "produces", "consumes", "tags",
-        "depends_on", "allowed_tools", "agent", "result_path",
-        "context_files", "max_tokens", "max_depth",
-        # legacy runner.py fields
-        "updated_at", "attempts_log",
-    ]
-    extras: dict = {}
-    for key in _RUNNER_EXTRAS:
-        if key in raw:
-            extras[key] = raw[key]
-    # Store extras on the ticket object as a non-dataclass attribute
-    object.__setattr__(ticket, "_extras", extras)
+    # Preserve legacy round-trip fields not on the dataclass (updated_at, attempts_log).
+    _LEGACY_EXTRAS = ["updated_at", "attempts_log", "allowed_tools", "max_depth"]
+    extras: dict = {k: raw[k] for k in _LEGACY_EXTRAS if k in raw}
+    if extras:
+        object.__setattr__(ticket, "_extras", extras)
 
     return ticket
 
@@ -215,7 +190,7 @@ def save_ticket(path: str, ticket: Union[Ticket, dict]) -> None:
     """
     if isinstance(ticket, Ticket):
         data = ticket.to_dict()
-        # Re-inject runner.py extras so the YAML stays complete
+        # Re-inject legacy extras so the YAML stays complete
         extras = getattr(ticket, "_extras", {})
         data.update(extras)
         # Status alias: runner.py open_dir expects "open" not "pending"
@@ -231,17 +206,12 @@ def save_ticket(path: str, ticket: Union[Ticket, dict]) -> None:
 def as_dict(ticket: Union[Ticket, dict]) -> dict:
     """
     Return a plain dict regardless of input type.
-    Use this in runner.py call-sites still using ticket.get("field") syntax
-    to stay backward compatible during incremental migration.
-    
-    NOTE: Includes both "ticket_id" (canonical) and "id" (legacy alias) for
-    backward compatibility with runner.py call-sites that expect "id".
+    Retained for serialization use cases only — do NOT use for read access in runner.py.
     """
     if isinstance(ticket, Ticket):
         data = ticket.to_dict()
         extras = getattr(ticket, "_extras", {})
         data.update(extras)
-        # Legacy alias: runner.py expects "id" for backward compatibility
         if "ticket_id" in data and "id" not in data:
             data["id"] = data["ticket_id"]
         if data.get("status") == "pending":
