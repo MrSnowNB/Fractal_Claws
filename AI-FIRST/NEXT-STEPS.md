@@ -45,9 +45,9 @@
 **Spec:** `AI-FIRST/STEP-01-TICKET-IO.md`  
 **File:** `src/ticket_io.py`  
 **Gate:** `python -m pytest tests/test_ticket_io.py -v`  
-**What it does:** Bridges raw-dict YAML loading in runner.py with the canonical  
-`Ticket` dataclass in operator_v7.py. Adds schema validation, enum coercion,  
-status aliasing, and a backward-compatible `as_dict()` shim for incremental migration.  
+**What it does:** Bridges raw-dict YAML loading in runner.py with the canonical
+`Ticket` dataclass. Adds schema validation, enum coercion, status aliasing,
+and a backward-compatible `as_dict()` shim for incremental migration.
 
 ---
 
@@ -55,43 +55,42 @@ status aliasing, and a backward-compatible `as_dict()` shim for incremental migr
 **Spec:** `AI-FIRST/STEP-02-TERMINAL-REGISTRY.md`  
 **Files:** `tools/terminal.py`, `tools/registry.py`  
 **Gate:** `python -m pytest tests/test_tools.py -v` — 14/14 pass  
-**What it does:**  
-- `tools/terminal.py` — wraps `subprocess.run` with a `TOOL_SCHEMA` dict,
-  `DANGEROUS_PATTERNS` denylist, sandbox path enforcement, and timeout.
-  Gives the agent shell access to any CLI binary on the machine.
+**What it does:**
+- `tools/terminal.py` — wraps `subprocess.run` with `DANGEROUS_PATTERNS` denylist,
+  sandbox path enforcement, and timeout. Windows-compatible (`shell=True`).
 - `tools/registry.py` — maps tool name strings to callables + validates args
-  against `TOOL_SCHEMA`. Replaces the hardcoded `if tool == "read_file"` dispatch
-  in runner.py with a dynamic registry.
-
-**Unlock:** Once this step is complete, the agent can call `nmap`, `git`,
-`meshtastic`, `gpg`, `ffmpeg`, and any other installed binary as a ticket action.
+  against `TOOL_SCHEMA`. Dynamic dispatch replaces hardcoded if/elif.
 
 ---
 
-### [ ] Step 3: Wire Registry into runner.py
+### [x] DONE — Step 3: Wire Registry into runner.py
 **Spec:** `AI-FIRST/STEP-03-RUNNER-WIRING.md`  
-**File:** `agent/runner.py` (refactor), `tests/test_runner_dispatch.py` (new)  
-**Gate:** `python -m pytest tests/ -v` — all tests pass including 11 new dispatch tests  
-**Tickets:** `tickets/open/STEP-03-A.yaml`, `STEP-03-B.yaml`, `STEP-03-C.yaml`  
-**What it does:**  
-- Replaces hardcoded `if/elif tool ==` dispatch in `parse_and_run_tools()`
-  with `REGISTRY.call(name, args)` — module-level singleton
-- Registers `run_command` as a first-class tool (no parser change needed)
-- Phase A ticket_io migration: typed field reads in `execute_ticket()`
-- Gate ticket (STEP-03-C) enforces journal-first commit protocol
+**Files:** `agent/runner.py` (refactor), `tests/test_runner_dispatch.py` (new)  
+**Gate:** `python -m pytest tests/test_runner_dispatch.py -v` — 11/11 pass  
+**What it does:**
+- `REGISTRY = ToolRegistry()` module-level singleton in runner.py
+- `parse_and_run_tools()` calls `REGISTRY.call(tool, args)` — no more if/elif
+- `run_command` registered as first-class tool
+- Gate ticket (STEP-03-C) enforced journal-first commit protocol
 
 ---
 
 ### [ ] Step 4: Trajectory Extractor
-**Spec:** `AI-FIRST/STEP-04-TRAJECTORY.md` *(to be written)*  
+**Spec:** `AI-FIRST/STEP-04-TRAJECTORY.md`  
 **File:** `src/trajectory_extractor.py`  
-**Gate:** `python -m pytest tests/test_trajectory.py -v` *(to be written)*  
-**What it does:**  
-- Post-run pass: reads `logs/<ticket_id>-attempts.jsonl`
+**Gate:** `python -m pytest tests/test_trajectory.py -v` *(to be written by Luffy)*  
+**Tickets:** `tickets/open/STEP-04-A.yaml`, `STEP-04-B.yaml`, `STEP-04-C.yaml`  
+**What it does:**
+- Post-run pass: reads `logs/<ticket_id>-attempts.jsonl` for all closed tickets
 - Identifies winning execution paths (outcome=pass chains)
-- Writes `skills/<goal-class>.yaml` with the compressed toolpath
-- This is the self-improving loop: Cline reads prior skills before decomposing,
+- Extracts the tool sequence, token count, elapsed time, and goal class
+- Writes `skills/<goal-class>.yaml` — compressed toolpath for reuse
+- Self-improving loop: Cline reads prior skills before decomposing,
   skipping re-decomposition of known-good goal classes
+
+**Unlock:** Once this step is complete, the runner has memory of what worked.
+New goals that match a known skill class skip decomposition entirely and
+run the winning toolpath directly.
 
 ---
 
@@ -99,7 +98,7 @@ status aliasing, and a backward-compatible `as_dict()` shim for incremental migr
 **Spec:** `AI-FIRST/STEP-05-RUNNER-MIGRATION.md` *(to be written)*  
 **File:** `agent/runner.py` (full typed field access)  
 **Gate:** Full existing test suite passes + new typed-access tests  
-**What it does:**  
+**What it does:**
 - Migrates all `ticket.get("field")` call-sites to `ticket.field` attribute access
 - Removes `as_dict()` shim usage
 - `load_ticket()` in runner now returns `Ticket` directly (Phase C migration)
@@ -113,12 +112,14 @@ The three-layer stack this build queue produces:
 ```
 Layer 1: CLINE (Key-Brain / Orchestrator)
   Reads goal → decomposes → writes YAML tickets
+  Reads skills/ before decomposing — skips known-good goal classes
   Evaluates results → escalates or closes
 
 Layer 2: FRACTAL CLAWS (Ticket Router / Gate)  ← this repo
   Dependency graph → drain loop → deadlock detect
   Typed Ticket contract (ticket_io) → audit JSONL
-  Tool registry → dispatches to execution layer
+  Tool registry (REGISTRY) → dispatches to execution layer
+  Trajectory extractor → writes skills/ after each pass
 
 Layer 3: HERMES-STYLE TOOLS (Execution Layer)
   terminal, process, patch, search_files

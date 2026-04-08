@@ -1,21 +1,21 @@
 ---
 title: Fractal Claws — Self-Healing Recursive Agent Harness
-version: "3.0"
-gate: "ticketing-validated — 2026-04-07"
+version: "4.0"
+gate: "step-3-validated — 2026-04-07"
 ---
 
 # Fractal Claws
 
-A proof-of-concept agentic harness where a **parent agent** (Cline in VS Code) decomposes
-a goal into tickets, and a **child runner** (`agent/runner.py`) picks them up, executes
-tool calls, writes results, and closes them. Tickets are YAML files. The contract between
-parent and child is the `Ticket` dataclass defined in `src/operator_v7.py`.
+A local agentic harness where a **parent agent** (Cline in VS Code) decomposes
+a goal into tickets, and a **child runner** (`agent/runner.py`) picks them up,
+executes tool calls, writes results, and closes them. Tickets are YAML files.
+The contract between parent and child is the `Ticket` dataclass in `src/operator_v7.py`.
 
 **One harness. Two roles. No swarms. No browser. No cloud.**
 
-> **Current gate (2026-04-07):** Ticketing system validated. `pytest tests/` → 6/6 passed.
-> All phases of the multistep harness green. Safe to build Phase 3 (OpenClaw tool registry)
-> on top of this foundation.
+> **Current gate (2026-04-07):** Steps 1–3 complete and validated.
+> `pytest tests/` → all green. Registry wired. Journal-first commit protocol active.
+> Step 4 (Trajectory Extractor) is next.
 
 ---
 
@@ -26,11 +26,26 @@ parent and child is the `Ticket` dataclass defined in `src/operator_v7.py`.
 | **Parent** | Cline (VS Code) — orchestrates via `.clinerules/`, writes tickets to `tickets/open/` |
 | **Runner** | `agent/runner.py` — decompose goal → drain queue → execute → close tickets |
 | **Ticket** | `src/operator_v7.py:Ticket` — canonical dataclass; `tickets/template.yaml` is the on-disk schema |
-| **Tools** | `read_file`, `write_file`, `exec_python`, `list_dir` — child-only, sandboxed to `output/` |
+| **Registry** | `tools/registry.py` — dynamic tool dispatch; replaces hardcoded if/elif in runner |
+| **Terminal** | `tools/terminal.py` — subprocess wrapper with DANGEROUS_PATTERNS denylist and timeout |
+| **Tools** | `read_file`, `write_file`, `exec_python`, `list_dir`, `run_command` — sandboxed |
 | **Audit log** | `logs/<id>-attempts.jsonl` — append-only, one JSON record per attempt |
+| **Journal** | `logs/luffy-journal.jsonl` — Luffy Law: written before every git commit |
 
 The model endpoint is configured in `settings.yaml`. Any OpenAI-compatible local endpoint
 (Lemonade, Ollama, LM Studio) works — no model names are hardcoded in the runner.
+
+---
+
+## Build Progress
+
+| Step | What | Status |
+|---|---|---|
+| Step 1 | Typed Ticket I/O Bridge (`src/ticket_io.py`) | ✅ DONE |
+| Step 2 | Terminal Tool + Tool Registry (`tools/terminal.py`, `tools/registry.py`) | ✅ DONE |
+| Step 3 | Wire Registry into runner.py (dynamic dispatch, 11 tests) | ✅ DONE |
+| Step 4 | Trajectory Extractor (`src/trajectory_extractor.py`) | 🔨 In Progress |
+| Step 5 | Full Phase A Migration of runner.py (typed field access) | ⏳ Queued |
 
 ---
 
@@ -64,46 +79,67 @@ pytest tests/ -v
 
 ---
 
+## Luffy Law — Commit Protocol
+
+Before every `git commit`, Luffy (the coding agent) must:
+
+1. `pytest tests/` — gate must be green
+2. Append a JSONL entry to `logs/luffy-journal.jsonl`
+3. `git add <changed files> logs/luffy-journal.jsonl`
+4. `git commit -m "STEP-XX: description"`
+5. `git push`
+
+Journal entry schema:
+```json
+{"ts": "ISO-8601", "step": "STEP-XX-Y", "action": "...", "status": "done", "files": [...]}
+```
+
+---
+
 ## Repo Structure
 
 ```
 Fractal_Claws/
 ├── AI-FIRST/                    ← Start here if you are a new AI assistant
-│   ├── CONTEXT.md               ← What this system is + current state
+│   ├── CONTEXT.md               ← System overview + current state
 │   ├── ARCHITECTURE.md          ← Dataclass map, ticket lifecycle, module inventory
-│   └── NEXT-STEPS.md            ← Phase 3 roadmap and open work
+│   ├── NEXT-STEPS.md            ← Build queue and open work
+│   ├── STEP-01-TICKET-IO.md
+│   ├── STEP-02-TERMINAL-REGISTRY.md
+│   ├── STEP-03-RUNNER-WIRING.md
+│   └── STEP-04-TRAJECTORY.md    ← Active spec
 ├── .clinerules/                 ← Cline rule files (parent config)
 ├── agent/
-│   └── runner.py                ← Active harness: decompose + drain
+│   └── runner.py                ← Decompose + drain loop (registry-wired)
 ├── src/
 │   ├── operator_v7.py           ← Ticket, TicketStatus, TicketPriority, TicketDepth
-│   └── tools/
-│       └── first_principles_solver.py
+│   ├── ticket_io.py             ← Typed ticket loading + as_dict() shim
+│   └── trajectory_extractor.py  ← Step 4 target
 ├── tickets/
-│   ├── template.yaml            ← Ticket schema (copy to create tickets)
-│   ├── open/                    ← Parent writes here (gitignored at runtime)
-│   ├── in_progress/             ← Runner moves ticket here on pickup
-│   ├── closed/                  ← Runner closes ticket here on pass
-│   └── failed/                  ← Runner moves ticket here on max depth
+│   ├── template.yaml
+│   ├── open/
+│   ├── in_progress/
+│   ├── closed/
+│   └── failed/
 ├── tools/
+│   ├── registry.py              ← Dynamic tool registry (Step 2)
+│   ├── terminal.py              ← subprocess wrapper + denylist (Step 2)
 │   ├── read_file.py
 │   └── write_file.py
 ├── tests/
-│   ├── conftest.py              ← Fixture: Ticket(test_mode=True)
-│   ├── test_multistep_harness.py ← PRIMARY GATE — 6/6 validated 2026-04-07
-│   ├── test_operator.py
-│   ├── test_harness_artifacts.py
-│   ├── test_first_principles_solver.py
-│   └── test_solver_init.py
-├── logs/                        ← JSONL audit logs + result files
+│   ├── conftest.py
+│   ├── test_multistep_harness.py
+│   ├── test_ticket_io.py
+│   ├── test_tools.py            ← 14 tests (Step 2)
+│   ├── test_runner_dispatch.py  ← 11 tests (Step 3)
+│   └── test_trajectory.py       ← Step 4 target
+├── logs/
+│   ├── luffy-journal.jsonl      ← Luffy Law audit trail
+│   └── <id>-attempts.jsonl      ← Per-ticket attempt logs
 ├── output/                      ← exec_python sandbox
-├── experiments/                 ← Daemon and LLM loop experiments
-├── CLAUDE.md                    ← Cline reads this first
+├── skills/                      ← Step 4 output: compressed toolpaths
+├── CLAUDE.md
 ├── AGENT-POLICY.md
-├── TROUBLESHOOTING.md
-├── REPLICATION-NOTES.md
-├── VISION.md
-├── OPENCLAW-PLAN.md
 ├── settings.yaml
 ├── pre_flight.py
 └── requirements.txt
@@ -116,17 +152,13 @@ Fractal_Claws/
 ```
 parent writes   → tickets/open/<id>.yaml
 runner picks up → tickets/in_progress/<id>.yaml
-runner executes → tool calls, writes result to logs/<id>-result.txt
+runner executes → tool calls via REGISTRY.call(), writes result to logs/<id>-result.txt
 runner closes   → tickets/closed/<id>.yaml   (on pass)
                 → tickets/failed/<id>.yaml   (on max depth / deadlock)
 audit appended  → logs/<id>-attempts.jsonl   (one line per attempt)
+journal updated → logs/luffy-journal.jsonl   (before every commit)
 parent reads    → result file, continues or escalates
 ```
-
-**Dependency graph:** tickets declare `depends_on: [TASK-XYZ]`. The runner
-defers a ticket if any dependency has not yet reached `closed/`. A ticket
-blocked with no runnable peers is a deadlock — runner prints the dependency
-graph and exits 1.
 
 ---
 
@@ -141,15 +173,15 @@ Append-only. Never rewrite. `tail -f logs/*.jsonl` for live monitoring.
 
 ---
 
-## Validation Gate (2026-04-07)
+## Validation Gates
 
-| Check | Status |
-|---|---|
-| `pytest tests/test_multistep_harness.py -v` | ✅ 6/6 passed |
-| `pytest tests/test_operator.py -v` | ✅ passing |
-| `python agent/runner.py --no-prewarm` (TASK-003 dep on TASK-002) | ✅ deadlock correctly detected |
-| Ticket dataclass `from_dict` / `to_dict` round-trip | ✅ validated |
-| Parent/child wiring via `Ticket.from_dict` | ✅ validated |
+| Gate | Tests | Status |
+|---|---|---|
+| Step 1 — ticket_io | `pytest tests/test_ticket_io.py -v` | ✅ |
+| Step 2 — tools | `pytest tests/test_tools.py -v` | ✅ 14/14 |
+| Step 3 — dispatch | `pytest tests/test_runner_dispatch.py -v` | ✅ 11/11 |
+| Step 4 — trajectory | `pytest tests/test_trajectory.py -v` | 🔨 in progress |
+| Full suite | `pytest tests/ -v` | ✅ all green |
 
 ---
 
@@ -166,5 +198,5 @@ See `AI-FIRST/ARCHITECTURE.md` for the full depth/model mapping.
 
 ## Troubleshooting
 
-See `TROUBLESHOOTING.md`. For new AI assistants onboarding to this codebase, start
-with `AI-FIRST/CONTEXT.md`.
+See `TROUBLESHOOTING.md`. For new AI assistants onboarding to this codebase,
+start with `AI-FIRST/CONTEXT.md`.

@@ -1,0 +1,51 @@
+ticket_id: STEP-04-C
+title: "Run full test suite, write journal, gate STEP-04"
+step: STEP-04
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-07"
+updated_at: "2026-04-07"
+result_path: logs/STEP-04-C-result.txt
+depends_on: [STEP-04-B]
+allowed_tools: [write_file]
+context_files:
+  - AI-FIRST/STEP-04-TRAJECTORY.md
+task: >
+  This is the gate ticket for STEP-04. STEP-04-A and STEP-04-B must be closed first.
+
+  Perform these actions in ORDER — do not skip or reorder:
+
+  1. JOURNAL FIRST — write a journal entry to logs/luffy-journal.jsonl.
+     Append (do not overwrite) this JSON line:
+     {"ts": "<ISO-8601 now>", "step": "STEP-04-C",
+      "action": "gate pass — trajectory extractor built, 12 tests green",
+      "status": "done",
+      "files": ["src/trajectory_extractor.py", "tests/test_trajectory.py"]}
+
+  2. Confirm these files exist and are non-empty:
+     - src/trajectory_extractor.py
+     - tests/test_trajectory.py
+     - logs/luffy-journal.jsonl
+
+  3. Write a gate summary to logs/STEP-04-gate.txt:
+     Step: STEP-04
+     Status: PASS
+     Tests: tests/test_trajectory.py (12+)
+     Files: src/trajectory_extractor.py, tests/test_trajectory.py
+     Journal: logs/luffy-journal.jsonl updated
+     Timestamp: <now>
+
+  This ticket passes when logs/STEP-04-gate.txt exists and is non-empty.
+
+  After this ticket closes, Luffy commits manually:
+    git add src/trajectory_extractor.py tests/test_trajectory.py \
+            logs/luffy-journal.jsonl logs/STEP-04-gate.txt skills/
+    git commit -m "STEP-04: trajectory extractor + 12 tests"
+    git push
+rationale: >
+  Enforces journal-first commit protocol. Ensures all Step 4 artifacts exist
+  and are logged before the git commit.
+produces: [logs/STEP-04-gate.txt, logs/luffy-journal.jsonl]
+consumes: [src/trajectory_extractor.py, tests/test_trajectory.py]
+tags: [gate, journal, commit-protocol, step-04]

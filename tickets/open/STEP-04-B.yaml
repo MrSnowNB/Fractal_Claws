@@ -1,0 +1,99 @@
+ticket_id: STEP-04-B
+title: "Write tests/test_trajectory.py — 12 trajectory extractor tests"
+step: STEP-04
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-07"
+updated_at: "2026-04-07"
+result_path: logs/STEP-04-B-result.txt
+depends_on: [STEP-04-A]
+allowed_tools: [read_file, write_file]
+context_files:
+  - AI-FIRST/STEP-04-TRAJECTORY.md
+  - src/trajectory_extractor.py
+  - tests/test_tools.py
+task: >
+  Read AI-FIRST/STEP-04-TRAJECTORY.md and src/trajectory_extractor.py.
+
+  Write tests/test_trajectory.py containing exactly these 12 tests:
+
+  Setup:
+  - sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+  - from trajectory_extractor import (
+        extract_trajectory, goal_class, write_skill, run_extraction
+    )
+  - Use pytest tmp_path fixture for all temp files
+  - Monkeypatch trajectory_extractor.LOG_DIR and trajectory_extractor.SKILLS_DIR
+    where needed to point into tmp_path
+
+  Tests:
+
+  1. test_extract_trajectory_pass:
+     Write a JSONL with one record: {"outcome": "pass", "ticket_id": "T001", "elapsed_s": 1.5}.
+     Call extract_trajectory("T001") with monkeypatched LOG_DIR.
+     Assert result["outcome"] == "pass".
+
+  2. test_extract_trajectory_no_file:
+     Call extract_trajectory("NONEXISTENT") with LOG_DIR pointing to empty tmp dir.
+     Assert result is None.
+
+  3. test_extract_trajectory_no_pass:
+     Write JSONL with only fail records.
+     Assert extract_trajectory returns None.
+
+  4. test_extract_trajectory_first_pass:
+     Write JSONL with: fail, pass (elapsed_s=2.0), pass (elapsed_s=1.0).
+     Assert result["elapsed_s"] == 2.0 (FIRST pass wins, not best).
+
+  5. test_extract_trajectory_skips_malformed:
+     Write JSONL: "not json\n" + valid pass record.
+     Assert result["outcome"] == "pass" (malformed line skipped).
+
+  6. test_goal_class_from_tags:
+     ticket = {"tags": ["write", "python", "test", "extra"]}
+     Assert goal_class(ticket) == "write-python-test".
+
+  7. test_goal_class_from_title:
+     ticket = {"title": "Generate Fibonacci", "tags": []}
+     Assert goal_class(ticket) == "generate-fibonacci".
+
+  8. test_goal_class_max_length:
+     ticket = {"title": "A" * 200, "tags": []}
+     Assert len(goal_class(ticket)) <= 48.
+
+  9. test_write_skill_creates_file:
+     Call write_skill("test-skill", {"elapsed_s": 1.0, "tool_calls": 2, "tokens": 100,
+     "tok_s": 100.0, "finish": "stop", "attempt": 1, "ts": "2026-04-07T00:00:00"},
+     {"ticket_id": "T001", "tags": [], "produces": [], "consumes": []}).
+     Assert YAML file exists and contains goal_class == "test-skill".
+
+  10. test_write_skill_keeps_best:
+      Write an existing skill YAML with elapsed_s: 0.5.
+      Call write_skill with elapsed_s=1.5.
+      Assert file still contains elapsed_s: 0.5 (existing is better).
+
+  11. test_write_skill_replaces_worse:
+      Write existing skill YAML with elapsed_s: 5.0.
+      Call write_skill with elapsed_s=1.0.
+      Assert file now contains elapsed_s: 1.0.
+
+  12. test_run_extraction_integration:
+      Create tmp_closed_dir with one ticket YAML:
+        ticket_id: INT-001, tags: [integration, test], produces: [], consumes: []
+      Create matching JSONL at tmp_log_dir/INT-001-attempts.jsonl:
+        {"outcome": "pass", "ticket_id": "INT-001", "elapsed_s": 2.0,
+         "tool_calls": 3, "tokens": 200, "tok_s": 100.0, "finish": "stop", "attempt": 1,
+         "ts": "2026-04-07T00:00:00"}
+      Monkeypatch LOG_DIR and SKILLS_DIR.
+      Call run_extraction(closed_dir=str(tmp_closed_dir)).
+      Assert skills/<goal_class>.yaml exists and goal_class == "integration-test".
+
+  All 12 tests must pass with python -m pytest tests/test_trajectory.py -v.
+  No network access. No model calls.
+rationale: >
+  Validates all four public functions of trajectory_extractor.py including the
+  full integration path from closed ticket + JSONL → skills YAML.
+produces: [tests/test_trajectory.py]
+consumes: [src/trajectory_extractor.py]
+tags: [tests, trajectory, skills, validation, step-04]
