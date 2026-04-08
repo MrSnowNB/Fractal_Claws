@@ -54,6 +54,21 @@ class TicketDepth(Enum):
     LEAF = 2      # NPU execution - reserved (model TBD, see settings.yaml)
 
 
+# Status aliases: runner.py writes "open" and "failed" to YAML.
+# TicketStatus has no "open" or "failed" values, so we coerce on load.
+_STATUS_ALIAS: Dict[str, str] = {
+    "open": "pending",
+    "failed": "escalated",
+    "in_progress": "pending",
+    "running": "pending",
+}
+
+# Priority aliases for forward-compat with any YAML variant spellings.
+_PRIORITY_ALIAS: Dict[str, str] = {
+    "urgent": "critical",
+}
+
+
 @dataclass
 class Ticket:
     """
@@ -61,6 +76,7 @@ class Ticket:
     
     Attributes:
         id: Unique identifier
+        title: Human-readable short description (optional)
         depth: 0 (root), 1 (worker), 2 (leaf)
         parent: Parent ticket ID
         children: List of child ticket IDs
@@ -80,7 +96,8 @@ class Ticket:
     priority: TicketPriority = TicketPriority.MEDIUM
     result: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    
+    title: str = ""
+
     # Step 5 migration fields
     task: Optional[str] = None
     max_tokens: Optional[int] = None
@@ -97,6 +114,7 @@ class Ticket:
         """Convert ticket to dictionary."""
         return {
             "ticket_id": self.id,
+            "title": self.title,
             "depth": self.depth,
             "parent": self.parent,
             "children": self.children,
@@ -115,24 +133,36 @@ class Ticket:
             "produces": self.produces,
             "consumes": self.consumes,
             "tags": self.tags,
-            "agent": self.agent
+            "agent": self.agent,
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Ticket":
-        """Create ticket from dictionary."""
+        """Create ticket from dictionary.
+
+        Accepts both 'ticket_id' (to_dict canonical) and 'id' (YAML/runner format).
+        Coerces runner status aliases ('open' → 'pending', 'failed' → 'escalated').
+        """
         ticket_id = data.get("ticket_id") or data.get("id")
         if not ticket_id:
             raise ValueError("ticket_id or id required in from_dict()")
+
+        raw_status = data.get("status", "pending")
+        coerced_status = _STATUS_ALIAS.get(raw_status, raw_status)
+
+        raw_priority = data.get("priority", "medium")
+        coerced_priority = _PRIORITY_ALIAS.get(raw_priority, raw_priority)
+
         return cls(
             id=ticket_id,
+            title=data.get("title", ""),
             depth=data.get("depth", 0),
             parent=data.get("parent"),
             children=data.get("children", []),
-            status=TicketStatus(data.get("status", "pending")),
+            status=TicketStatus(coerced_status),
             attempts=data.get("attempts", 0),
             decrement=data.get("decrement", 3),
-            priority=TicketPriority(data.get("priority", "medium")),
+            priority=TicketPriority(coerced_priority),
             result=data.get("result", {}),
             created_at=data.get("created_at", datetime.now().isoformat()),
             task=data.get("task"),
@@ -144,7 +174,7 @@ class Ticket:
             produces=data.get("produces", []),
             consumes=data.get("consumes", []),
             tags=data.get("tags", []),
-            agent=data.get("agent", "")
+            agent=data.get("agent", ""),
         )
 
 
