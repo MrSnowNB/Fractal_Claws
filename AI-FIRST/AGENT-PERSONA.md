@@ -78,11 +78,12 @@ Before every `git commit`:
 **Journal integrity is a hard invariant.**
 A malformed line is fixed by splitting (never rewriting) before the next entry.
 
-Journal entry schema (STEP-07+):
+Journal entry schema (STEP-09+):
 ```json
 {
   "ts": "ISO-8601",
   "step": "STEP-XX-Y",
+  "agent_id": "luffy-v1",
   "action": "...",
   "status": "done",
   "files": [...],
@@ -93,6 +94,9 @@ Journal entry schema (STEP-07+):
   }
 }
 ```
+
+`agent_id` defaults to `"luffy-v1"`. When children run tickets in STEP-11+,
+they use IDs like `"luffy-child-TASK-042"`. The field is always present.
 
 ---
 
@@ -118,6 +122,7 @@ Exception: journal integrity fix is permitted during HALT documentation.
 - Do not block on lint violations — warn, log, proceed
 - Do not put transport logic in `runner.py` or `operator_v7.py` — it belongs in `tools/delegate_task.py` only
 - Do not run integration tests in the automated gate — they are manual-only
+- Do not add spawning mechanics, orchestration loops, or process management in STEP-09
 
 ---
 
@@ -125,7 +130,69 @@ Exception: journal integrity fix is permitted during HALT documentation.
 
 - `pytest tests/ -v` passes (1 skipped allowed — platform-specific)
 - `logs/luffy-journal.jsonl` — every line is valid JSON
+- `logs/luffy-journal.jsonl` — every line has `agent_id` field (STEP-09+)
 - `Ticket.from_dict(ticket.to_dict()) == ticket` — round-trip lossless
+- `Ticket.to_dict()` always includes `graph_scope` and `return_to` (null if unset)
 - `context_files` on any ticket touching existing code is non-empty (lint enforced)
 - `delegate_task()` is the only function that knows about transport substrate
 - Integration tests in `tests/integration/` are always `pytest.mark.skip` by default
+
+---
+
+## Birth Package Contract (STEP-09+)
+
+The birth package is the complete, formal context handoff from parent to child.
+It is a **typed contract** — not a prompt, not a conversation dump.
+Any model that reads a birth package can orient and execute without any
+Luffy-specific knowledge.
+
+### 5-File Schema (Fixed)
+
+| File | Strand | Content | Type |
+|---|---|---|---|
+| `invariants.md` | 1 | Agent laws + containment invariant | Markdown |
+| `tool_registry.yaml` | 2 | Allowed tools — NEVER `spawn_child`/`delegate_task` | YAML |
+| `ticket.yaml` | 3 | Task dict including `graph_scope` + `return_to` | YAML |
+| `anchor.json` | 4 | One-sentence system state string + `spawned_at` | JSON |
+| `discovery_protocol.md` | 5 | 8-step orientation sequence | Markdown |
+
+### Hard Rules
+
+1. **Parent memory MUST NOT appear in any of these files.**
+   The parent's decomposition reasoning stays in the parent's log.
+   Children must not inherit the parent's reasoning chain.
+
+2. **`anchor.json` → `system_state` is a string, not a dict.**
+   One sentence. Example: `"STEP-08E complete — drain() and execute_ticket() call prune_logs() with settings.yaml config."`
+   A dict here means parent memory leaked into the birth package. Fix it.
+
+3. **`tool_registry.yaml` MUST NOT contain `spawn_child` or `delegate_task`.**
+   This is structural containment, not convention. Children do not spawn grandchildren.
+
+4. **The 5-file schema is fixed.**
+   Do not add files without a spec change to this document.
+
+5. **Birth packages are pruned after result evaluation.**
+   `prune_ready: true` is on every return path from `run_child()`.
+
+### Location Convention
+
+```
+birth/<ticket_id>/
+  invariants.md
+  tool_registry.yaml
+  ticket.yaml
+  anchor.json
+  discovery_protocol.md
+```
+
+### What the Birth Package Is NOT
+
+- Not a conversation history
+- Not a copy of the parent's context window
+- Not a prompt template
+- Not a model-specific format
+
+Any agent — Luffy, a future specialist, or a different model entirely —
+can read these 5 files and execute the ticket.
+That is the definition of model-agnostic handoff.
