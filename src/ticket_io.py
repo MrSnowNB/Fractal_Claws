@@ -19,6 +19,8 @@ ValidationWarning is logged (not raised) for non-critical field coercions.
 Backward compatibility
 ----------------------
     load_ticket() returns a Ticket dataclass with all fields populated.
+    ticket._extras mirrors every raw YAML key so runner.py and tests can
+    still do extras['task'], extras['depends_on'], etc.
     The as_dict() shim is preserved for serialization use cases only.
     runner.py must use ticket.field attribute access — not ticket.get() or ticket[key].
 """
@@ -120,8 +122,10 @@ def _write_yaml(path: str, data: dict) -> None:
 def _coerce_status(value: object, ticket_id: str) -> TicketStatus:
     """Map raw string to TicketStatus; default to PENDING with a warning."""
     _ALIAS = {
-        "open":   "pending",
-        "failed": "escalated",
+        "open":        "pending",
+        "failed":      "escalated",
+        "in_progress": "pending",
+        "running":     "pending",
     }
     raw = str(value).lower() if value is not None else "pending"
     raw = _ALIAS.get(raw, raw)
@@ -133,7 +137,12 @@ def _coerce_status(value: object, ticket_id: str) -> TicketStatus:
 
 
 def _coerce_priority(value: object, ticket_id: str) -> TicketPriority:
+    """Map raw string to TicketPriority; default to MEDIUM with a warning."""
+    _ALIAS = {
+        "urgent": "critical",
+    }
     raw = str(value).lower() if value is not None else "medium"
+    raw = _ALIAS.get(raw, raw)
     try:
         return TicketPriority(raw)
     except ValueError:
@@ -148,7 +157,11 @@ def load_ticket(path: str) -> Ticket:
     Load a YAML ticket file and return a fully-populated Ticket dataclass.
 
     All runner.py extras (task, depends_on, context_files, result_path, etc.)
-    are mapped directly onto the dataclass fields — no _extras side-channel.
+    are mapped directly onto the dataclass fields.  ticket._extras mirrors
+    the full raw YAML dict so callers can still do extras['task'] etc.
+
+    Unknown status/priority values are silently coerced to PENDING/MEDIUM
+    (logged at WARNING level) — never raise on unknown enum values.
 
     Raises
     ------
@@ -170,15 +183,36 @@ def load_ticket(path: str) -> Ticket:
             raw[key] = copy.deepcopy(default)
             logger.debug("[ticket_io] %s: defaulted %s=%r", ticket_id, key, default)
 
-    # Use Ticket.from_dict() which maps all fields including Step-5 extras.
-    # from_dict() accepts both 'ticket_id' and 'id' keys.
-    ticket = Ticket.from_dict(raw)
+    # Build Ticket directly using local coerce helpers so unknown
+    # status/priority values fall back gracefully instead of raising.
+    from datetime import datetime
+    ticket = Ticket(
+        id=ticket_id,
+        title=raw.get("title", ""),
+        depth=raw.get("depth", 0),
+        parent=raw.get("parent"),
+        children=raw.get("children", []),
+        status=_coerce_status(raw.get("status", "pending"), ticket_id),
+        attempts=raw.get("attempts", 0),
+        decrement=raw.get("decrement", 3),
+        priority=_coerce_priority(raw.get("priority", "medium"), ticket_id),
+        result=raw.get("result", {}),
+        created_at=raw.get("created_at", datetime.now().isoformat()),
+        task=raw.get("task"),
+        max_tokens=raw.get("max_tokens"),
+        depends_on=raw.get("depends_on", []),
+        context_files=raw.get("context_files", []),
+        result_path=raw.get("result_path"),
+        rationale=raw.get("rationale", ""),
+        produces=raw.get("produces", []),
+        consumes=raw.get("consumes", []),
+        tags=raw.get("tags", []),
+        agent=raw.get("agent", ""),
+    )
 
-    # Preserve legacy round-trip fields not on the dataclass (updated_at, attempts_log).
-    _LEGACY_EXTRAS = ["updated_at", "attempts_log", "allowed_tools", "max_depth"]
-    extras: dict = {k: raw[k] for k in _LEGACY_EXTRAS if k in raw}
-    if extras:
-        object.__setattr__(ticket, "_extras", extras)
+    # _extras mirrors the full raw dict so tests and runner.py can still
+    # access any key via ticket._extras['key'] without breakage.
+    object.__setattr__(ticket, "_extras", dict(raw))
 
     return ticket
 

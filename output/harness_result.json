@@ -1,0 +1,6 @@
+{
+  "passed": true,
+  "checks": ["check1", "check2", "check3", "check4"],
+  "failed_checks": [],
+  "ts": "2026-04-08T13:03:14.241929+00:00"
+}

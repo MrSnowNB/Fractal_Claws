@@ -1,0 +1,13 @@
+{
+  "test_run": "harness-integration-v1",
+  "report_contains_top_words": true,
+  "report_char_count": 99,
+  "artifacts_produced": [
+    "output/word_freq.py",
+    "output/report.md",
+    "output/audit.json",
+    "output/harness_result.json"
+  ],
+  "ts": "2026-04-08T09:04:35Z",
+  "generated_at": "2026-04-08T09:04:35Z"
+}
