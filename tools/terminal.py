@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import subprocess
+import sys
 import time
 from typing import Any, List, Optional
 
@@ -37,6 +38,21 @@ def _log_entry(path: str, record: dict) -> None:
     os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
+
+
+def _shell_cmd(cmd: List[str]) -> Any:
+    """On Windows, join list to string for shell=True (cmd.exe requires a single string).
+
+    On Unix/macOS, pass the list as-is — the shell handles it correctly either way,
+    but list form is safer for arg separation.
+
+    Background: subprocess.run(list, shell=True) on Windows passes only cmd[0] to
+    cmd.exe and ignores the rest, so && chaining and multi-arg commands silently fail.
+    Joining to a string fixes this without changing Unix behavior.
+    """
+    if sys.platform == "win32":
+        return " ".join(str(c) for c in cmd)
+    return cmd
 
 
 def run_command(
@@ -106,7 +122,7 @@ def run_command(
 
     try:
         result = subprocess.run(
-            cmd,
+            _shell_cmd(cmd),
             capture_output=True,
             text=True,
             timeout=timeout,
