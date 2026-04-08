@@ -6,9 +6,9 @@
 
 ## Core Type Layer: `src/operator_v7.py`
 
-This module is the **canonical type layer** for Phase 3. The runner currently
-treats tickets as raw dicts loaded from YAML. Phase 3 will wire these dataclasses
-into `load_ticket()` / `save_ticket()` for schema validation and type safety.
+This module is the **canonical type layer** for Phase 3. Step 5 completes the
+migration: `agent/runner.py` will read all ticket fields as typed attributes,
+not raw dict keys.
 
 ### Enums
 
@@ -45,17 +45,29 @@ class Ticket:
     priority: TicketPriority = TicketPriority.MEDIUM
     result: Dict[str, Any] = field(default_factory=dict)
     created_at: str             # ISO 8601, auto-set on construction
+    # Fields added for Step 5 migration (may already be present):
+    depends_on: List[str] = field(default_factory=list)
+    context_files: List[str] = field(default_factory=list)
+    result_path: Optional[str] = None
+    task: Optional[str] = None
 ```
+
+**Step 5 migration note:** Before replacing any `ticket.get("field")` call site,
+verify the field is declared here. If it is not, add it with a safe default
+before touching `agent/runner.py`.
 
 **Key methods:**
 - `Ticket.from_dict(data: dict) -> Ticket` — deserialize from YAML/JSON dict
 - `ticket.to_dict() -> dict` — serialize back to YAML/JSON dict
 
+**YAML key mapping:** The YAML key is `ticket_id`. `from_dict()` must map
+`ticket_id` → `id`. Verify this mapping exists before Step 5 migration.
+
 ### Construction Pattern
 
 ```python
 ticket = Ticket.from_dict({
-    "id": "TASK-001",
+    "ticket_id": "TASK-001",
     "depth": 0,
     "priority": "high",
     "status": "pending",
@@ -65,6 +77,7 @@ ticket = Ticket.from_dict({
     "children": [],
     "result": {},
 })
+# ticket.id == "TASK-001"
 # ticket.status == TicketStatus.PENDING
 # ticket.priority == TicketPriority.HIGH
 ```
@@ -90,9 +103,8 @@ in_progress → failed  (attempts >= decrement, no more escalation)
 open → deferred       (depends_on not yet satisfied — stays in open/)
 ```
 
-**Deadlock condition:** All remaining open tickets are deferred (every ticket
-has at least one unsatisfied dependency). Runner prints the dependency graph
-and exits 1. This is expected and correct.
+**Deadlock condition:** All remaining open tickets are deferred.
+Runner prints the dependency graph and exits 1.
 
 ---
 
@@ -101,14 +113,9 @@ and exits 1. This is expected and correct.
 Tickets declare dependencies via `depends_on: [TASK-XYZ, ...]` in their YAML.
 The runner reads `tickets/closed/` to determine which IDs are satisfied.
 
-Example:
-```yaml
-# TASK-003.yaml
-ticket_id: TASK-003
-depends_on:
-  - TASK-002
-```
-TASK-003 will be deferred until `tickets/closed/TASK-002.yaml` exists.
+**Step 5 migration:** `depends_on` must be a declared field on `Ticket`.
+After migration, the dependency check reads `ticket.depends_on` (typed list),
+not `ticket.get("depends_on", [])`.
 
 ---
 
@@ -140,30 +147,59 @@ Rules:
 | Module | Exports | Notes |
 |---|---|---|
 | `src/operator_v7.py` | `Ticket`, `TicketStatus`, `TicketPriority`, `TicketDepth` | Type layer. No `Operator` class. |
-| `src/tools/first_principles_solver.py` | `FirstPrinciplesAnalyzer`, `RecursiveSolver`, `SelfHealingMechanism` | Imported by `operator_v7` |
-| `agent/runner.py` | CLI entrypoints `--goal`, `--once`, `--no-prewarm` | Drain loop + decomposer |
+| `src/ticket_io.py` | `load_ticket()`, `save_ticket()`, `scan_dir()`, `as_dict()` shim | Step 5: shim stays here for serialization |
+| `src/trajectory_extractor.py` | `extract_trajectory()`, `write_skill()`, `run_extraction()` | Step 4 complete |
+| `agent/runner.py` | CLI entrypoints `--goal`, `--once`, `--no-prewarm` | Step 5: dict access → typed access |
+| `tools/registry.py` | `ToolRegistry`, `REGISTRY` singleton | Dynamic dispatch |
+| `tools/terminal.py` | `run_command()` | subprocess + DANGEROUS_PATTERNS denylist |
 | `tools/read_file.py` | `read_file(path)` | Child tool — sandboxed |
 | `tools/write_file.py` | `write_file(path, content)` | Child tool — sandboxed |
 | `pre_flight.py` | `run_checks()` | Endpoint + dep health check |
-| `init.py` | Setup bootstrap | Run once after clone |
+| `skills/` | `<goal-class>.yaml` files | Executable memory — written by trajectory extractor |
 
 ---
 
 ## Test Inventory
 
-| Test file | What it covers | Gate? |
+| Test file | What it covers | Gate |
 |---|---|---|
-| `tests/test_multistep_harness.py` | 5-phase parent/child pipeline, HarnessTrace | **PRIMARY GATE** |
-| `tests/test_operator.py` | Ticket dataclass construction, serialization | Supporting |
-| `tests/test_harness_artifacts.py` | File artifact existence checks | Supporting |
-| `tests/test_first_principles_solver.py` | Solver module | Supporting |
-| `tests/test_solver_init.py` | Solver init | Supporting |
+| `tests/test_ticket_io.py` | Typed ticket loading, enum coercion, as_dict shim | Step 1 ✅ |
+| `tests/test_tools.py` | Terminal denylist, registry dispatch, schema validation | Step 2 ✅ 14/14 |
+| `tests/test_runner_dispatch.py` | REGISTRY wiring, ticket_io integration | Step 3 ✅ 11/11 |
+| `tests/test_trajectory.py` | Trajectory extractor, skill writing | Step 4 ✅ 13/13 |
+| `tests/test_runner_dispatch.py` | Step 5 will add: isinstance(ticket, Ticket) assertions | Step 5 target |
+| `tests/test_multistep_harness.py` | 5-phase parent/child pipeline, HarnessTrace | PRIMARY GATE |
 
-**Gate command:**
+**Full gate command:**
 ```bash
-pytest tests/test_multistep_harness.py -v
-# Expected: 6/6 passed
+pytest tests/ -v
+# Expected: 38+ tests, all green
 ```
+
+---
+
+## Skills Directory — Executable Memory
+
+`skills/<goal-class>.yaml` is the output of the trajectory extractor.
+Each file encodes the winning toolpath for a known goal class:
+
+```yaml
+goal_class: write-file-and-test
+first_pass_attempt: 1
+tools_used: [read_file, write_file, exec_python]
+elapsed_s: 4.1
+tokens: 512
+produces: ["tests/*.py", "src/*.py"]
+consumes: ["tickets/*.yaml"]
+```
+
+Cline reads `skills/` before decomposing a new goal. If the goal class matches,
+decomposition is skipped and the toolpath runs directly. This is the self-improving
+loop that gets faster with every passing run.
+
+**Design requirement:** Every skill YAML must be machine-actionable — structured
+so any agent instance can read it and reconstruct the execution plan without
+asking for clarification. Same discipline as AI-FIRST docs.
 
 ---
 
@@ -176,8 +212,7 @@ pytest tests/test_multistep_harness.py -v
 | LEAF | 2 | TBD | **Deprecated / reserved** |
 
 Depth is assigned at ticket creation. The runner reads `settings.yaml` to map
-depth integer to the model endpoint string. Never hardcode model names in
-`agent/runner.py`.
+depth integer to model endpoint string. Never hardcode model names in `agent/runner.py`.
 
 ---
 

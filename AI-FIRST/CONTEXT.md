@@ -55,6 +55,7 @@ Before acting on any ticket or instruction, ask:
    - Journal must be valid JSONL before every push
    - Audit logs are append-only and never rewritten
    - Tickets declare dependencies and cannot run out of order
+   - Typed field access — not raw dict access — is the contract (Step 5)
 
 2. **What is the actual current state?**
    Read the filesystem. Read the logs. Read the journal.
@@ -62,7 +63,7 @@ Before acting on any ticket or instruction, ask:
 
 3. **What is the minimal intervention that restores invariant?**
    Not the most complete solution. The smallest correct one.
-   Fix the line. Don’t rebuild the system.
+   Fix the line. Split the entry. Add the field. Don’t rebuild the system.
 
 **If an instruction conflicts with an invariant, honor the invariant.**
 **Document why. Then act.**
@@ -77,10 +78,9 @@ Before acting on any ticket or instruction, ask:
 | Step 2 | `tools/terminal.py` + `tools/registry.py` | `pytest tests/test_tools.py` ✅ 14/14 |
 | Step 3 | Registry wired into `agent/runner.py` | `pytest tests/test_runner_dispatch.py` ✅ 11/11 |
 | Step 4 | `src/trajectory_extractor.py` + `skills/` populated | `pytest tests/test_trajectory.py` ✅ 13/13 |
-| Step 5 | Full typed field migration of runner.py | `pytest tests/` — **next** |
+| Step 5 | Full typed field migration of runner.py | `pytest tests/ -v` + zero grep hits — **ACTIVE** |
 
-**Do not refactor the `Ticket` dataclass or the ticket lifecycle without running
-the full gate (`pytest tests/ -v`) first.**
+**Full suite count: 38+ tests across 4 test files. All green as of Step 4.**
 
 ---
 
@@ -153,6 +153,12 @@ because it is required to write a valid journal entry. Fix it, then stop.
 10. **The AI-FIRST folder is the ground truth.** When in doubt, read it.
     An agent that reads it can audit the system state without asking.
 
+11. **Step 5 target:** Zero `ticket.get()` / `ticket["field"]` call sites
+    in `agent/runner.py`. Typed attribute access only. See `STEP-05-RUNNER-MIGRATION.md`.
+
+12. **`ticket.id` vs `ticket_id`:** Verify the YAML key mapping in `Ticket.from_dict()`
+    before migrating any call site in Step 5. This is the most common migration trap.
+
 ---
 
 ## Repository Owner
@@ -168,15 +174,15 @@ via Lemonade (primary) or Ollama. Python 3.10.11. pytest 7.4.3.
 |---|---|
 | `src/operator_v7.py` | Ticket dataclass — the type layer |
 | `src/ticket_io.py` | Typed ticket loader + as_dict() shim |
-| `agent/runner.py` | Decompose + drain loop (REGISTRY-wired) |
+| `agent/runner.py` | Decompose + drain loop (REGISTRY-wired, Step 5 migration target) |
 | `tools/registry.py` | Dynamic tool registry |
 | `tools/terminal.py` | subprocess wrapper + DANGEROUS_PATTERNS |
 | `src/trajectory_extractor.py` | Post-run pass → writes skills/ |
 | `skills/` | Executable memory — winning toolpaths by goal class |
 | `tickets/template.yaml` | Ticket schema |
 | `settings.yaml` | Model endpoint config |
-| `tests/test_multistep_harness.py` | Primary regression gate |
 | `logs/luffy-journal.jsonl` | Luffy Law audit trail |
+| `logs/STEP-05-audit.txt` | Step 5 dict-access call site map (written by STEP-05-A) |
 
 ---
 
@@ -191,17 +197,19 @@ via Lemonade (primary) or Ollama. Python 3.10.11. pytest 7.4.3.
 - Do not add tools to runner.py directly — register via `REGISTRY.register()`
 - Do not ignore a HALT instruction — stop work immediately
 - Do not act on a ticket without reading this folder first
+- Do not replace `ticket.get("x")` with `ticket.x` without first confirming
+  the field exists on the dataclass (Step 5 trap — see STEP-05-RUNNER-MIGRATION.md)
 
 ---
 
 ## How to Give Yourself More Context
 
 ```
-AI-FIRST/AGENT-PERSONA.md       — who Luffy is, first principles, HALT protocol, Luffy Law
-AI-FIRST/ARCHITECTURE.md        — dataclass fields, ticket lifecycle, module inventory
-AI-FIRST/NEXT-STEPS.md          — build queue, open work, entry points
-AI-FIRST/STEP-04-TRAJECTORY.md  — completed spec for Step 4
-OPENCLAW-PLAN.md                — full Phase 3 specification
-VISION.md                       — long-range project direction
-TROUBLESHOOTING.md              — known failure modes and fixes
+AI-FIRST/AGENT-PERSONA.md          — who Luffy is, first principles, HALT, Luffy Law
+AI-FIRST/ARCHITECTURE.md           — dataclass fields, ticket lifecycle, module inventory
+AI-FIRST/NEXT-STEPS.md             — build queue, open work, entry points
+AI-FIRST/STEP-05-RUNNER-MIGRATION.md — active spec
+OPENCLAW-PLAN.md                   — full Phase 3 specification
+VISION.md                          — long-range project direction
+TROUBLESHOOTING.md                 — known failure modes and fixes
 ```
