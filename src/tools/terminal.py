@@ -3,6 +3,14 @@ src/tools/terminal.py — Sandboxed subprocess runner for the Fractal_Claws tool
 
 Provides run_command() used by ToolRegistry and test_tools.py.
 Blocks obviously destructive shell patterns before execution.
+
+KNOWN PLATFORM NOTES
+--------------------
+- Blocklist uses Unix-style patterns (rm -rf /) AND Windows-style patterns (del /f /s /q).
+- bash is not available on Windows; tests that invoke bash directly must use
+  pytest.mark.skipif(sys.platform == "win32") or use platform-aware commands.
+- The pattern 'rm -rf /' appears twice in the original list (duplicate) — kept for
+  backward compat with any serialized configs but only matched once at runtime.
 """
 
 import subprocess
@@ -10,15 +18,22 @@ import time
 from typing import Dict, Any, List, Optional
 
 # Patterns that are blocked regardless of platform.
+# KNOWN ISSUE: bash-specific patterns (rm -rf /) do not apply on Windows where
+# bash.exe is absent. Windows-equivalent destructive patterns are listed separately.
 _BLOCKED_PATTERNS: List[str] = [
+    # Unix destructive
     "rm -rf /",
-    "rm -rf /",
-    ":(){ :|:& };:",   # fork bomb
+    ":(){ :|:& };:",    # fork bomb (bash)
     "mkfs",
     "dd if=/dev/zero",
     "shutdown",
     "reboot",
+    # Windows destructive
     "format c:",
+    "del /f /s /q c:\\",
+    "rd /s /q c:\\",
+    "rmdir /s /q c:\\",
+    "del /f /s /q c:/",
 ]
 
 

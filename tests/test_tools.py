@@ -1,6 +1,16 @@
-"""tests/test_tools.py — Validation gate for terminal + registry modules."""
+"""tests/test_tools.py — Validation gate for terminal + registry modules.
+
+KNOWN PLATFORM ISSUES
+----------------------
+test_run_command_blocked_unix:
+    Uses 'bash -c "rm -rf /"' which requires bash. bash is NOT available on
+    Windows by default. This test is skipped on win32 and replaced by
+    test_run_command_blocked_windows which uses cmd.exe syntax.
+    Resolution: both tests verify the blocklist fires; together they give
+    full cross-platform coverage.
+"""
+import sys
 import pytest
-import time
 from pathlib import Path
 
 from tools.terminal import run_command
@@ -33,8 +43,28 @@ def test_run_command_timeout():
     assert r["returncode"] == -1
 
 
-def test_run_command_blocked():
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "KNOWN ISSUE: bash is not available on Windows. "
+        "Blocklist coverage for Windows is provided by test_run_command_blocked_windows. "
+        "Resolution: install Git Bash or WSL to enable this test on Windows."
+    ),
+)
+def test_run_command_blocked_unix():
+    """Unix: blocklist intercepts 'bash -c rm -rf /' before subprocess is spawned."""
     r = run_command(["bash", "-c", "rm -rf /"])
+    assert r["blocked"] is True
+    assert r["returncode"] == -1
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows-specific blocklist test. Unix equivalent: test_run_command_blocked_unix.",
+)
+def test_run_command_blocked_windows():
+    """Windows: blocklist intercepts 'del /f /s /q c:\\' before subprocess is spawned."""
+    r = run_command(["cmd", "/c", "del /f /s /q c:\\"])
     assert r["blocked"] is True
     assert r["returncode"] == -1
 
@@ -46,7 +76,6 @@ def test_run_command_elapsed_ms():
 
 
 def test_run_command_cwd(tmp_path):
-    # Use echo %CD% on Windows and pwd on Unix for cross-platform cwd verification
     import platform
     if platform.system() == "Windows":
         r = run_command(["cmd", "/c", "echo %CD%"], cwd=str(tmp_path))
@@ -101,7 +130,6 @@ def test_registry_default_fills():
 def test_registry_extra_args_passthrough():
     reg = ToolRegistry()
     reg.register("noop", lambda **kw: kw, schema={"x": {"type": str, "required": True}})
-    # Should not raise even though 'extra' is not in schema
     reg.call("noop", {"x": "hi", "extra": "ignored"})
 
 
