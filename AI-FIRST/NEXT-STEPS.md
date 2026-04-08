@@ -187,18 +187,50 @@ of the spec object. STEP-08 journal entry must use the full object. Do not backf
 - `delegate_task` is the ONLY transport layer — zero transport logic in runner.py or operator_v7.py
 - Integration tests always skipped by default in full suite run
 
-**Next entry point:** STEP-09 — Graphify Knowledge Graph Navigation Index (Preview — Do Not Build Yet)
+---
+
+### [ ] Step 8E: FIFO Log Retention Policy
+**Spec:** `AI-FIRST/STEP-08E-FIFO-RETENTION.md`  
+**Files:** `agent/log_manager.py` (new), `settings.yaml`, `agent/runner.py`, `tests/test_log_manager.py` (new)  
+**Gate:** `pytest tests/test_log_manager.py -v && pytest tests/ -v`
+
+**What it does:**
+- `agent/log_manager.py` — `prune_logs()` FIFO eviction of oldest `-attempts.jsonl` /
+  `-result.txt` pairs when `logs/` exceeds `max_logs` entries
+- Escalated tickets (in `tickets/failed/`) are protected — their logs are never evicted
+- `min_retain` most-recent logs always survive regardless of count
+- Called from `drain()` entry and `execute_ticket()` on every PASS close
+- `settings.yaml` gets three new `logging:` keys: `max_logs`, `min_retain`, `keep_escalated`
+- Pure file I/O — no model, no endpoint, no API key required
+
+**Sub-tasks:**
+
+| Sub-task | Task | Owner |
+|---|---|---|
+| 8E-A | Implement `agent/log_manager.py` with `prune_logs()`, `_ticket_id()`, `_get_protected_ids()` | Luffy |
+| 8E-B | Add `max_logs`, `min_retain`, `keep_escalated` to `settings.yaml` under `logging:` | Luffy |
+| 8E-C | Wire `prune_logs()` into `drain()` and `execute_ticket()` in `agent/runner.py` | Luffy |
+| 8E-D | Run `pytest tests/test_log_manager.py -v` — all 14 tests green | Luffy |
+| 8E-E | Run `pytest tests/ -v` — full suite green (1 skipped allowed) | Luffy |
+| 8E-F | Write journal entry with full anchor object, commit, push | Luffy |
+
+**Invariants to preserve:**
+- `prune_logs()` never touches `tickets/` — only `logs/`
+- Escalated ticket logs survive regardless of count
+- `min_retain` most-recent logs always survive
+- Idempotent: second call with same args returns 0 if count is within bounds
+- Full test suite stays green (1 skipped for platform)
 
 ---
 
-### [ ] Step 9: Graphify — Knowledge Graph Navigation Index (Preview — Do Not Build Yet)
+### [ ] Step 9: Graphify — Knowledge Graph Navigation Index
+**Spec:** `AI-FIRST/STEP-09-GRAPHIFY.md` (not yet written)  
+**Prerequisite:** STEP-08E complete. Repo must have ≥20 Python files for graph to be useful.  
 **What it does:**
 - `tools/graphify.py` — AST walker builds `graph/fractal-claws.json`
 - `query_graph` tool in REGISTRY — replaces speculative file reads
 - Nodes: FILE, FUNCTION, CLASS, TICKET, SKILL, STEP. Edges: CALLS, IMPORTS, MODIFIES, DEPENDS_ON.
 - Runs on commit (pre-commit hook or CI)
-
-**Prerequisite:** STEP-08 complete. Repo must have ≥20 Python files for graph to be useful.
 
 ---
 
@@ -219,6 +251,7 @@ Layer 2: FRACTAL CLAWS (Ticket Router / Gate)  ← this repo
   Trajectory extractor → writes skills/ after each pass
   Skill store → reads skills/ before decomposition
   Lint gate → warns on malformed tickets before dispatch
+  Log manager → FIFO prune on drain entry + every PASS close (STEP-08E)
 
 Layer 3: OPENCLAW (Child Executor)  — A3B model
   Spawned by delegate_task() — loads only context_files from ticket

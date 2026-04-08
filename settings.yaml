@@ -66,3 +66,6 @@ logging:
   dir: logs/
   pattern: "logs/session_{date}.jsonl"
   gitignore: true
+  max_logs: 100          # FIFO eviction ceiling — max -attempts.jsonl files on disk
+  min_retain: 10         # always keep at least N most-recent logs regardless of count
+  keep_escalated: true   # tickets in tickets/failed/ are never evicted
