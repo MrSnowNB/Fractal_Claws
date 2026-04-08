@@ -105,43 +105,57 @@ decomposition and run the winning toolpath directly.
 
 ---
 
-### [ ] Step 5: Full Typed Field Migration of runner.py  ← ACTIVE
+### [x] DONE — Step 5: Full Typed Field Migration of runner.py
 **Spec:** `AI-FIRST/STEP-05-RUNNER-MIGRATION.md`  
-**Files:** `agent/runner.py`, `src/operator_v7.py` (possible field additions), `tests/test_runner_dispatch.py`  
-**Gate:** `pytest tests/ -v` all green + `grep -n 'ticket\.get\|ticket\[' agent/runner.py` returns zero hits  
+**Files:** `agent/runner.py`, `src/operator_v7.py`, `tests/test_runner_dispatch.py`  
+**Gate:** `pytest tests/ -v` ✅ 151 passed, 1 skipped, 0 failed  
+**Dict-access call sites removed:** all (`grep 'ticket\.get\|ticket\['` → zero hits)  
+**What it does:**
+- `load_ticket()` now returns a typed `Ticket` dataclass (via `ticket_io.load_ticket()`)
+- All `ticket.get("field")` and `ticket["field"]` call sites replaced with `ticket.field`
+- Optional fields (`depends_on`, `context_files`, `result_path`, `task`) added to dataclass
+- `as_dict()` shim kept in `ticket_io.py` for serialization only — removed from runner read paths
+- `ticket.id` confirmed as canonical attribute; `from_dict()` maps `ticket_id` → `id`
+
+---
+
+### [ ] Step 6: Skill-Aware Decomposition  ← ACTIVE
+**Spec:** `AI-FIRST/STEP-06-SKILL-DECOMP.md`  
+**Files:** `agent/runner.py`, `src/skill_store.py`, `tests/test_skill_decomp.py`  
+**Gate:** `pytest tests/ -v` all green + skill cache hit path exercised by E2E test  
 
 **Tickets (in order):**
 | Ticket | Task | Depends on |
 |---|---|---|
-| STEP-05-A | Audit all dict-access call sites in runner.py → `logs/STEP-05-audit.txt` | — |
-| STEP-05-B | Migrate `load_ticket()` to return `Ticket` directly | STEP-05-A |
-| STEP-05-C | Replace all remaining dict-access call sites with typed attribute access | STEP-05-B |
-| STEP-05-D | Gate, journal, commit, push | STEP-05-C |
+| STEP-06-A | Write `src/skill_store.py` — load/match/write skill YAML | — |
+| STEP-06-B | Wire `skill_store` into runner decomposition path | STEP-06-A |
+| STEP-06-C | Write `tests/test_skill_decomp.py` — unit + E2E cache-hit test | STEP-06-B |
+| STEP-06-D | Gate, journal, commit, push | STEP-06-C |
 
 **First principles rationale:**  
-The `Ticket` dataclass is the system’s type contract. Raw dict access bypasses
-schema validation and silently swallows missing fields as `None`. Typed access
-makes the contract visible at every call site and lets tests catch regressions
-immediately. This step makes the contract enforceable at runtime.
+The trajectory extractor (Step 4) writes `skills/<goal-class>.yaml` after every
+successful run. Those files are executable memory — but nothing reads them yet.
+This step closes the loop: before decomposing a goal, the runner checks `skills/`
+for a matching goal class. A hit skips LLM decomposition entirely and runs the
+cached toolpath directly. A miss falls through to normal decomposition and writes
+a new skill on success.
 
 **What to watch for:**
-- Optional fields not yet declared on `Ticket` (add with safe defaults before migrating)
-- `as_dict()` shim — keep in `ticket_io.py` for serialization, remove from runner read paths
-- `ticket.id` vs `ticket_id` mapping in `from_dict()` — verify in audit
-- Deadlock detection reads `ticket.id` — confirm field name survives migration
+- Goal-class matching must be exact-string then fuzzy (edit-distance ≤ 2)
+- Skill YAML must survive a round-trip through `skill_store.load()` → `skill_store.write()`
+- Cache hit must be logged to audit JSONL with `source: skill_cache`
+- E2E test must write a real skill file, trigger runner, and assert decompose was NOT called
 
 ---
 
-### [ ] Step 6: Skill-Aware Decomposition (Preview — Do Not Build Yet)
+### [ ] Step 7: Typed TicketResult + OpenClaw Spawn (Preview — Do Not Build Yet)
 **What it does:**
-- Before decomposing a goal, runner reads `skills/` for matching goal class
-- If match found: skip decomposition, run cached toolpath directly
-- If no match: decompose as normal, write skill after pass
-- Typed `TicketResult` replaces `ticket.result` raw dict
-- Foundation for OpenClaw child-process spawning (depth=1 on second GPU)
+- `ticket.result` raw dict replaced with typed `TicketResult` dataclass
+- `delegate_task` tool triggers a real child runner process on second GPU at depth=1
+- Foundation for multi-agent coordination (Key-Brain ↔ OpenClaw)
 
-**Prerequisite:** Step 5 complete. A runner reading typed fields can be extended
-cleanly. A runner reading raw dicts cannot.
+**Prerequisite:** Step 6 complete. Skill-aware routing must be stable before
+adding child-process complexity.
 
 ---
 
@@ -157,6 +171,7 @@ Layer 2: FRACTAL CLAWS (Ticket Router / Gate)  ← this repo
   Typed Ticket contract (ticket_io + operator_v7) → audit JSONL
   Tool registry (REGISTRY) → dispatches to execution layer
   Trajectory extractor → writes skills/ after each pass
+  Skill store → reads skills/ before decomposition (Step 6)
 
 Layer 3: HERMES-STYLE TOOLS (Execution Layer)
   terminal, process, patch, search_files
