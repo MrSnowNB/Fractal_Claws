@@ -2,14 +2,9 @@
 
 ## Top Words
 
-| Word | Count |
-|------|-------|
-| the | 6 |
-| fox | 2 |
-| dog | 2 |
-| quick | 1 |
-| brown | 1 |
+- the: 5
+- fox: 2
+- dog: 2
+- quick: 1
 
-## Summary
-
-The total unique word count is 13.
+Generated: 2026-04-08
