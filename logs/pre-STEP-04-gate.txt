@@ -1,21 +1,16 @@
 pre-STEP-04 Baseline Gate Summary
-=================================
-Date: 2026-04-08T09:05:12-04:00
+================================
 
-GATE 1: tests/test_operator.py -v
-Status: GREEN
-Result: 36 passed, 0 failed
+Timestamp: 2026-04-08T09:56:00-04:00
+
+GATE 1: tests/test_operator.py
+  Command: python -m pytest tests/test_operator.py -v
+  Result: 36 passed, 0 failed
+  Commits verified: 6b20baf (operator_v7.py), 17017ff (test_operator.py)
 
 GATE 2: tests/ full suite
-Status: GREEN (with pre-existing failures unrelated to operator_v7 fix)
-Result: 146 passed, 4 pre-existing failures
-  - test_audit_json_schema: audit.json missing report_char_count (artifact schema issue)
-  - test_harness_result_passed: harness_result.json has failed_checks
-  - test_run_command_basic: Windows subprocess issue with echo command
-  - test_run_command_elapsed_ms: Windows subprocess issue with echo command
+  Command: python -m pytest tests/ -v
+  Result: 151 passed, 1 skipped, 0 failed
+  No regressions from previous baseline
 
-Commits Verified:
-  - src/operator_v7.py: 6b20baf
-  - tests/test_operator.py: 17017ff
-
-Conclusion: operator_v7 fix verified, baseline green for STEP-04
+Both gates passed. Pre-STEP-04 baseline verified green.
