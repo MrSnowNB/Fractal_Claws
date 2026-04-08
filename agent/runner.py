@@ -40,6 +40,8 @@ from openai import OpenAI
 from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
 from tools.terminal import run_command
 
+from src.ticket_io import load_ticket as load_ticket_typed
+
 
 # ── config ────────────────────────────────────────────────────────────────────
 
@@ -145,11 +147,12 @@ BUDGET_FLOOR    = 1024
 
 WORDS_PER_TOKEN = 0.75
 
-def token_budget(ticket: dict) -> int:
-    task_words = len(str(ticket.get("task", "")).split())
+def token_budget(ticket: "Ticket") -> int:
+    from src.operator_v7 import Ticket
+    task_words = len(str(ticket.task or "").split())
     estimate   = int(task_words / WORDS_PER_TOKEN * 24)
     budget     = max(BUDGET_FLOOR, min(estimate, BUDGET_CEILING))
-    max_tok    = ticket.get("max_tokens")
+    max_tok    = ticket.max_tokens
     return int(max_tok) if max_tok is not None else budget
 
 
@@ -254,8 +257,9 @@ def is_failed(ticket_id: str) -> bool:
     return os.path.exists(os.path.join(FAIL_DIR, f"{ticket_id}.yaml"))
 
 
-def deps_met(ticket: dict) -> bool:
-    return all(is_closed(d) for d in (ticket.get("depends_on") or []))
+def deps_met(ticket: "Ticket") -> bool:
+    from src.operator_v7 import Ticket
+    return all(is_closed(d) for d in (ticket.depends_on or []))
 
 
 def next_ticket_id() -> str:
@@ -283,8 +287,9 @@ def result_summary(result_path: str) -> str:
     return content.strip()[:800]
 
 
-def inject_upstream_context(ticket: dict) -> str:
-    deps = ticket.get("depends_on") or []
+def inject_upstream_context(ticket: "Ticket") -> str:
+    from src.operator_v7 import Ticket
+    deps = ticket.depends_on or []
     if not deps:
         return ""
     blocks = []
@@ -414,10 +419,10 @@ def build_prompt(ticket: dict, upstream_context: str) -> str:
 # ── execute one ticket ────────────────────────────────────────────────────────
 
 def execute_ticket(ticket_path: str) -> bool:
-    ticket    = load_ticket(ticket_path)
-    ticket_id = ticket.get("ticket_id", Path(ticket_path).stem)
-    result_path = ticket.get("result_path", f"{LOG_DIR}/{ticket_id}-result.txt")
-    depth     = int(ticket.get("depth", 0))
+    ticket    = load_ticket_typed(ticket_path)
+    ticket_id = ticket.id
+    result_path = ticket.result_path if ticket.result_path else f"{LOG_DIR}/{ticket_id}-result.txt"
+    depth     = ticket.depth
     attempt_n = depth + 1
 
     print(f"\n[runner] ── {ticket_id} (attempt {attempt_n}) ──")

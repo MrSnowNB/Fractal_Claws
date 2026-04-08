@@ -66,7 +66,7 @@ class TestTicketCreation:
         op = Operator()
         ticket = op.create_ticket(id="TASK-003", depth=2, priority="low")
         data = ticket.to_dict()
-        assert data["id"] == "TASK-003"
+        assert data["ticket_id"] == "TASK-003"
         assert data["depth"] == 2
         assert data["priority"] == "low"
 
