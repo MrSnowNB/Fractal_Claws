@@ -1,0 +1,14 @@
+STEP-06 Baseline Gate Report
+============================
+Date: 2026-04-08T10:23:06-04:00
+
+GATE 1: tests/test_skill_decomp.py
+  Result: 15 passed, 0 failed
+
+GATE 2: tests/
+  Result: 166 passed, 1 skipped
+
+Commits Verified:
+  - 17017ff60ce2a2172fb1ceaffddb8623b99f8159 (skill_store tests)
+
+Status: GREEN
