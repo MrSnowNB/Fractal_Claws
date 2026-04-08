@@ -44,7 +44,7 @@ from src.ticket_io import (
     ticket_exists,
     TicketIOError,
 )
-from src.operator_v7 import Ticket, TicketStatus, TicketPriority
+from src.operator_v7 import Ticket, TicketResult, TicketStatus, TicketPriority
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,10 @@ class TestLoadTicketHappyPath:
         assert ticket.depth == 1
         assert ticket.decrement == 2
         assert ticket.priority == TicketPriority.HIGH
-        assert ticket.result == {"score": 0.95}
+        # result is now a typed TicketResult, not a raw dict
+        assert isinstance(ticket.result, TicketResult)
+        assert ticket.result.score == 0.95
+        assert ticket.result.passed is False  # default when absent from YAML
 
     def test_extras_attached(self, tmp_path):
         """Runner extras (task, depends_on, tags, etc.) attach as _extras."""
@@ -167,7 +170,8 @@ class TestFieldDefaults:
         assert ticket.priority == TicketPriority.MEDIUM
         assert ticket.status == TicketStatus.PENDING
         assert ticket.children == []
-        assert ticket.result == {}
+        # result is None when absent from YAML (typed Optional[TicketResult])
+        assert ticket.result is None
         assert ticket.parent is None
 
     def test_extras_defaults(self, tmp_path):

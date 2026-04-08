@@ -33,12 +33,12 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import yaml
 
 # Import canonical dataclass from operator_v7
-from src.operator_v7 import Ticket, TicketStatus, TicketPriority
+from src.operator_v7 import Ticket, TicketResult, TicketStatus, TicketPriority
 
 logger = logging.getLogger(__name__)
 
