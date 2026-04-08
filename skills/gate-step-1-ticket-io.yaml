@@ -1,0 +1,19 @@
+goal_class: gate-step-1-ticket-io
+ticket_id: GATE-STEP-01
+tags:
+- gate
+- step-1
+- ticket-io
+- validation
+- commit-on-pass
+tool_calls: 1
+tokens: 11771
+elapsed_s: 38.06
+tok_s: 309.3
+finish: stop
+attempt: 1
+ts: '2026-04-07T18:07:30'
+produces:
+- stdout:pytest-step1-results
+- commit:gate-step-01-pass
+consumes: []

@@ -1,0 +1,19 @@
+goal_class: audit-metadata-json-output
+ticket_id: TASK-010
+tags:
+- audit
+- metadata
+- json-output
+- handoff-test
+- harness-test
+tool_calls: 1
+tokens: 744
+elapsed_s: 14.73
+tok_s: 50.5
+finish: stop
+attempt: 1
+ts: '2026-04-07T17:25:02'
+produces:
+- output/audit.json
+consumes:
+- output/report.md

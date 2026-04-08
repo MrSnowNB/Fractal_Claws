@@ -1,0 +1,20 @@
+goal_class: reporting-markdown-upstream-context
+ticket_id: TASK-009
+tags:
+- reporting
+- markdown
+- upstream-context
+- handoff-test
+- harness-test
+tool_calls: 2
+tokens: 858
+elapsed_s: 21.24
+tok_s: 40.4
+finish: stop
+attempt: 1
+ts: '2026-04-07T17:24:47'
+produces:
+- output/report.md
+consumes:
+- output/word_freq.py
+- stdout:word-frequency-table

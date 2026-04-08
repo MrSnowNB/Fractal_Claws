@@ -1,0 +1,25 @@
+goal_class: verification-parent-check-audit-read
+ticket_id: TASK-011
+tags:
+- verification
+- parent-check
+- audit-read
+- attempt-log-validation
+- harness-test
+- end-to-end
+tool_calls: 1
+tokens: 1792
+elapsed_s: 124.53
+tok_s: 14.4
+finish: stop
+attempt: 1
+ts: '2026-04-07T17:27:07'
+produces:
+- output/harness_result.json
+consumes:
+- output/word_freq.py
+- output/report.md
+- output/audit.json
+- logs/TASK-008-attempts.jsonl
+- logs/TASK-009-attempts.jsonl
+- logs/TASK-010-attempts.jsonl

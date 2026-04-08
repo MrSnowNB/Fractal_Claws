@@ -1,0 +1,19 @@
+goal_class: word-frequency-corpus-analysis-write-and-exec
+ticket_id: TASK-008
+tags:
+- word-frequency
+- corpus-analysis
+- write-and-exec
+- foundation
+- harness-test
+tool_calls: 2
+tokens: 764
+elapsed_s: 30.79
+tok_s: 24.8
+finish: stop
+attempt: 1
+ts: '2026-04-07T17:24:26'
+produces:
+- output/word_freq.py
+- stdout:word-frequency-table
+consumes: []
