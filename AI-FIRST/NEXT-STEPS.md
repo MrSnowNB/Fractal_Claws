@@ -36,10 +36,29 @@ Before every `git commit`:
 **Journal integrity is a hard invariant.** A malformed line is a violation.
 Detect it → split and correct (never rewrite) → then write the new entry.
 
-Entry schema:
+### Journal Entry Schema (STEP-07+ — includes anchor)
+
 ```json
-{"ts": "ISO-8601", "step": "STEP-XX-Y", "action": "...", "status": "done", "files": [...]}
+{
+  "ts": "ISO-8601",
+  "step": "STEP-XX-Y",
+  "action": "...",
+  "status": "done",
+  "files": ["..."],
+  "anchor": {
+    "system_state": "<one sentence: what is true about the system right now>",
+    "open_invariants": ["<invariant 1>", "<invariant 2>"],
+    "next_entry_point": "<STEP-XX-Y: what to do next and which file to touch first>"
+  }
+}
 ```
+
+The `anchor` field is the **cold-start signal** — a new agent session reads ONLY
+the last journal line to reconstruct system state. No spec re-reads. No file loads.
+The `next_entry_point` is the single source of truth for what to do next.
+
+**Entries written before STEP-07 do not have `anchor` — this is expected.**
+Do not backfill old entries. Write new entries with `anchor` from STEP-07-A onwards.
 
 ---
 
@@ -73,7 +92,7 @@ Adds schema validation, enum coercion, status aliasing, and a backward-compatibl
 **Gate:** `pytest tests/test_tools.py -v` ✅ 14/14  
 **What it does:**
 - `tools/terminal.py` — `subprocess.run` wrapper with `DANGEROUS_PATTERNS` denylist,
-  sandbox enforcement, timeout. Windows-compatible.
+  sandbox enforcement, timeout. Windows-compatible (`_shell_cmd()` join for win32).
 - `tools/registry.py` — dynamic tool dispatch via `TOOL_SCHEMA`. Replaces if/elif.
 
 ---
@@ -98,10 +117,6 @@ Adds schema validation, enum coercion, status aliasing, and a backward-compatibl
 - Identifies winning execution paths (outcome=pass chains)
 - Extracts tool sequence, token count, elapsed time, goal class
 - Writes `skills/<goal-class>.yaml` — executable memory for reuse
-- Cline reads `skills/` before decomposing — skips known-good goal classes
-
-**Unlock:** Runner now has memory of what worked. Matching goal classes skip
-decomposition and run the winning toolpath directly.
 
 ---
 
@@ -109,74 +124,111 @@ decomposition and run the winning toolpath directly.
 **Spec:** `AI-FIRST/STEP-05-RUNNER-MIGRATION.md`  
 **Files:** `agent/runner.py`, `src/operator_v7.py`, `tests/test_runner_dispatch.py`  
 **Gate:** `pytest tests/ -v` ✅ 151 passed, 1 skipped, 0 failed  
-**Dict-access call sites removed:** all (`grep 'ticket\.get\|ticket\['` → zero hits)  
-**What it does:**
-- `load_ticket()` now returns a typed `Ticket` dataclass (via `ticket_io.load_ticket()`)
-- All `ticket.get("field")` and `ticket["field"]` call sites replaced with `ticket.field`
-- Optional fields (`depends_on`, `context_files`, `result_path`, `task`) added to dataclass
-- `as_dict()` shim kept in `ticket_io.py` for serialization only — removed from runner read paths
-- `ticket.id` confirmed as canonical attribute; `from_dict()` maps `ticket_id` → `id`
+**What it does:** All `ticket.get()`/`ticket[key]` replaced with typed `ticket.field` access.
 
 ---
 
-### [ ] Step 6: Skill-Aware Decomposition  ← ACTIVE
+### [x] DONE — Step 6: Skill-Aware Decomposition
 **Spec:** `AI-FIRST/STEP-06-SKILL-DECOMP.md`  
 **Files:** `agent/runner.py`, `src/skill_store.py`, `tests/test_skill_decomp.py`  
-**Gate:** `pytest tests/ -v` all green + skill cache hit path exercised by E2E test  
+**Gate:** `pytest tests/ -v` ✅ 167 passed, 1 skipped, 0 failed  
+**What it does:**
+- `src/skill_store.py` — load/match/write skill YAML with fuzzy matching (edit-distance ≤ 2)
+- Cache check in `execute_ticket()` before `call_model()` — cache hit skips LLM entirely
+- Audit JSONL written on cache hit with `source: skill_cache`
+- `match_goal_class()` → exact then fuzzy → `load_skill()` → run `tool_sequence` via REGISTRY
+
+---
+
+### [ ] Step 7: Anchor Journal + TicketResult + Lint Gate + Delegate Spawn  ← ACTIVE
+**Spec:** `AI-FIRST/STEP-07-ANCHOR-SPAWN.md`  
+**Files:** `src/operator_v7.py`, `src/ticket_io.py`, `agent/runner.py`, `tools/delegate_task.py`,
+`AI-FIRST/AGENT-PERSONA.md`, `tests/test_ticket_io.py`, `tests/integration/test_delegate_task.py`  
+**Gate:** `pytest tests/ -v` → 167+ passed, 1 skipped, 0 failed + manual integration test  
 
 **Tickets (in order):**
 | Ticket | Task | Depends on |
 |---|---|---|
-| STEP-06-A | Write `src/skill_store.py` — load/match/write skill YAML | — |
-| STEP-06-B | Wire `skill_store` into runner decomposition path | STEP-06-A |
-| STEP-06-C | Write `tests/test_skill_decomp.py` — unit + E2E cache-hit test | STEP-06-B |
-| STEP-06-D | Gate, journal, commit, push | STEP-06-C |
+| STEP-07-A | Journal anchor schema + cold-start rule in AGENT-PERSONA.md | STEP-06 |
+| STEP-07-B | `TicketResult` dataclass in `operator_v7.py`; migrate `ticket.result` | STEP-07-A |
+| STEP-07-C | `lint_ticket()` in `ticket_io.py`; warn on violation; log to `lint-violations.jsonl` | STEP-07-B |
+| STEP-07-D | `tools/delegate_task.py` — shared-filesystem transport; register in REGISTRY | STEP-07-C |
+| STEP-07-E | Integration test (`tests/integration/`) — skipped by default, manual ZBook run | STEP-07-D |
+| STEP-07-F | Gate, journal (with anchor), commit, push | STEP-07-E |
 
-**First principles rationale:**  
-The trajectory extractor (Step 4) writes `skills/<goal-class>.yaml` after every
-successful run. Those files are executable memory — but nothing reads them yet.
-This step closes the loop: before decomposing a goal, the runner checks `skills/`
-for a matching goal class. A hit skips LLM decomposition entirely and runs the
-cached toolpath directly. A miss falls through to normal decomposition and writes
-a new skill on success.
+**First principles rationale:**
+A ticket is a typed message, not a file. It can travel over any substrate.
+The ZBook is the minimum viable two-node mesh: parent (Key-Brain 80B) +
+child (OpenClaw A3B) on shared memory and shared filesystem.
+Anchors keep the parent cold between dispatches — critical on a machine
+where both models share RAM. TicketResult gives the child a typed return
+channel. Lint gate is pre-flight before the message leaves the parent's
+memory domain. delegate_task is the substrate abstraction layer.
 
 **What to watch for:**
-- Goal-class matching must be exact-string then fuzzy (edit-distance ≤ 2)
-- Skill YAML must survive a round-trip through `skill_store.load()` → `skill_store.write()`
-- Cache hit must be logged to audit JSONL with `source: skill_cache`
-- E2E test must write a real skill file, trigger runner, and assert decompose was NOT called
+- `TicketResult` defaults to `None` in `ticket.result` for backward compat with old YAML
+- Lint gate warns, does NOT block — hard-fail comes in STEP-08 after false-positive audit
+- `delegate_task()` transport is ONLY in `tools/delegate_task.py` — zero transport logic
+  in runner.py or operator_v7.py
+- Integration test is SKIP-by-default — never run in automated gate
+- Journal entries from STEP-07-A onward MUST include `anchor` field
 
 ---
 
-### [ ] Step 7: Typed TicketResult + OpenClaw Spawn (Preview — Do Not Build Yet)
+### [ ] Step 8: Lint Hard-Fail + Multi-Ticket Chain (Preview — Do Not Build Yet)
 **What it does:**
-- `ticket.result` raw dict replaced with typed `TicketResult` dataclass
-- `delegate_task` tool triggers a real child runner process on second GPU at depth=1
-- Foundation for multi-agent coordination (Key-Brain ↔ OpenClaw)
+- After measuring lint false-positive rate from real runs, promote warn → hard-fail
+- Multi-ticket dependency chain with `delegate_task` — parent chains child tickets
+- Deadlock detection across spawned children
 
-**Prerequisite:** Step 6 complete. Skill-aware routing must be stable before
-adding child-process complexity.
+**Prerequisite:** STEP-07 complete. Real ZBook integration test run with model loaded.
+
+---
+
+### [ ] Step 9: Graphify — Knowledge Graph Navigation Index (Preview — Do Not Build Yet)
+**What it does:**
+- `tools/graphify.py` — AST walker builds `graph/fractal-claws.json`
+- `query_graph` tool in REGISTRY — replaces speculative file reads
+- Nodes: FILE, FUNCTION, CLASS, TICKET, SKILL, STEP. Edges: CALLS, IMPORTS, MODIFIES, DEPENDS_ON.
+- Runs on commit (pre-commit hook or CI)
+
+**Prerequisite:** STEP-08 complete. Repo must have ≥20 Python files for graph to be useful.
 
 ---
 
 ## Architecture Context
 
 ```
-Layer 1: CLINE (Key-Brain / Orchestrator)
-  Reads goal → reads skills/ → skips decomposition if goal class known
-  Writes YAML tickets → evaluates results → escalates or closes
+Layer 1: CLINE (Key-Brain / Orchestrator)  — 80B coder
+  Reads anchor from last journal line (cold start: 1 line only)
+  Reads skills/ → skips decomposition if goal class known
+  Writes YAML tickets → lint_ticket() pre-flight
+  Calls delegate_task() → sleeps while child executes
+  Reads TicketResult.anchor → continues chain or escalates
 
 Layer 2: FRACTAL CLAWS (Ticket Router / Gate)  ← this repo
   Dependency graph → drain loop → deadlock detect
-  Typed Ticket contract (ticket_io + operator_v7) → audit JSONL
+  Typed Ticket + TicketResult contract (ticket_io + operator_v7)
   Tool registry (REGISTRY) → dispatches to execution layer
   Trajectory extractor → writes skills/ after each pass
-  Skill store → reads skills/ before decomposition (Step 6)
+  Skill store → reads skills/ before decomposition
+  Lint gate → warns on malformed tickets before dispatch
 
-Layer 3: HERMES-STYLE TOOLS (Execution Layer)
+Layer 3: OPENCLAW (Child Executor)  — A3B model
+  Spawned by delegate_task() — loads only context_files from ticket
+  Executes tool_sequence via REGISTRY
+  Writes TicketResult to result_path (including anchor summary)
+  Exits — parent reads result, continues
+
+Layer 4: HERMES-STYLE TOOLS (Execution Layer)
   terminal, process, patch, search_files
-  web_search, vision, delegate_task, cronjob
+  delegate_task (substrate abstraction)
   Every CLI binary on the machine
+
+Substrate (ZBook POC → Liberty Mesh):
+  ZBook:        shared filesystem (tickets/open/, tickets/closed/)
+  Liberty Mesh: LoRa serial — Ticket.to_dict() → JSON → radio → JSON → Ticket.from_dict()
+  Only tools/delegate_task.py changes per substrate
 ```
 
 ---
@@ -189,4 +241,5 @@ Every step must be completable on any machine with:
 - No model, no endpoint, no API key required for tests
 - No network access required for tests
 
-Integration tests go in `tests/integration/` and are always skipped by default.
+Integration tests go in `tests/integration/` and are ALWAYS skipped by default.
+Run manually: `pytest tests/integration/ -v -s --no-header`
