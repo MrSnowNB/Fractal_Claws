@@ -20,6 +20,8 @@ import json
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Callable
+from enum import Enum
+from dataclasses import dataclass, field
 from src.tools.first_principles_solver import FirstPrinciplesAnalyzer, RecursiveSolver, SelfHealingMechanism
 from enum import Enum
 from dataclasses import dataclass, field
@@ -70,6 +72,23 @@ _PRIORITY_ALIAS: Dict[str, str] = {
 
 
 @dataclass
+class TicketResult:
+    """
+    Result of a ticket execution.
+    
+    Attributes:
+        passed: Whether the execution passed
+        score: Numeric score (optional)
+        notes: Additional notes (optional)
+        output_path: Path to output file if any (optional)
+    """
+    passed: bool
+    score: Optional[float] = None
+    notes: Optional[str] = None
+    output_path: Optional[str] = None
+
+
+@dataclass
 class Ticket:
     """
     A unit of work with pass/fail criteria.
@@ -84,7 +103,7 @@ class Ticket:
         attempts: Number of execution attempts
         decrement: Remaining escalation decrements
         priority: low | medium | high | critical
-        result: Test pass/fail, score, and notes
+        result: Optional[TicketResult] — test pass/fail, score, and notes
     """
     id: str
     depth: int = 0
@@ -94,7 +113,7 @@ class Ticket:
     attempts: int = 0
     decrement: int = 3
     priority: TicketPriority = TicketPriority.MEDIUM
-    result: Dict[str, Any] = field(default_factory=dict)
+    result: Optional[TicketResult] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     title: str = ""
 
@@ -112,6 +131,14 @@ class Ticket:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert ticket to dictionary."""
+        result_dict = None
+        if self.result is not None:
+            result_dict = {
+                "passed": self.result.passed,
+                "score": self.result.score,
+                "notes": self.result.notes,
+                "output_path": self.result.output_path,
+            }
         return {
             "ticket_id": self.id,
             "title": self.title,
@@ -122,7 +149,7 @@ class Ticket:
             "attempts": self.attempts,
             "decrement": self.decrement,
             "priority": self.priority.value,
-            "result": self.result,
+            "result": result_dict,
             "created_at": self.created_at,
             "task": self.task,
             "max_tokens": self.max_tokens,
@@ -153,6 +180,16 @@ class Ticket:
         raw_priority = data.get("priority", "medium")
         coerced_priority = _PRIORITY_ALIAS.get(raw_priority, raw_priority)
 
+        result_data = data.get("result")
+        result = None
+        if result_data is not None:
+            result = TicketResult(
+                passed=result_data.get("passed", False),
+                score=result_data.get("score"),
+                notes=result_data.get("notes"),
+                output_path=result_data.get("output_path"),
+            )
+
         return cls(
             id=ticket_id,
             title=data.get("title", ""),
@@ -163,7 +200,7 @@ class Ticket:
             attempts=data.get("attempts", 0),
             decrement=data.get("decrement", 3),
             priority=TicketPriority(coerced_priority),
-            result=data.get("result", {}),
+            result=result,
             created_at=data.get("created_at", datetime.now().isoformat()),
             task=data.get("task"),
             max_tokens=data.get("max_tokens"),

@@ -67,7 +67,7 @@ _DEFAULTS: dict = {
     "attempts":      0,
     "decrement":     3,
     "priority":      "medium",
-    "result":        {},
+    "result":        None,
     "title":         "",
     "task":          "",
     "rationale":     "",
@@ -150,6 +150,20 @@ def _coerce_priority(value: object, ticket_id: str) -> TicketPriority:
         return TicketPriority.MEDIUM
 
 
+def _build_result(value: object) -> Optional[TicketResult]:
+    """Convert raw dict to TicketResult; return None if value is None or empty."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return TicketResult(
+            passed=value.get("passed", False),
+            score=value.get("score"),
+            notes=value.get("notes"),
+            output_path=value.get("output_path"),
+        )
+    return None
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def load_ticket(path: str) -> Ticket:
@@ -196,7 +210,7 @@ def load_ticket(path: str) -> Ticket:
         attempts=raw.get("attempts", 0),
         decrement=raw.get("decrement", 3),
         priority=_coerce_priority(raw.get("priority", "medium"), ticket_id),
-        result=raw.get("result", {}),
+        result=_build_result(raw.get("result")),
         created_at=raw.get("created_at", datetime.now().isoformat()),
         task=raw.get("task"),
         max_tokens=raw.get("max_tokens"),
