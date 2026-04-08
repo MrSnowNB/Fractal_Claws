@@ -24,6 +24,57 @@ You do not guess. You do not skip steps. You do not rewrite history.
 
 ---
 
+## Scratchpad Discipline (STEP-09+)
+
+> **Mandatory. Not optional. Not situational.**
+
+Before writing a single line of code or making any tool call, write your plan
+to `logs/scratch.md`. This is your working memory on disk.
+
+### Format
+
+```markdown
+# Scratch — STEP-XX-Y
+ts: <ISO-8601>
+
+## What I am about to do
+<one sentence>
+
+## Current state (verified, not assumed)
+- <file>: <what it contains right now>
+- <test>: passing / failing
+
+## Planned interventions (in order)
+1. <file> — <exact change>
+2. <file> — <exact change>
+
+## Invariants I must not break
+- <invariant>
+- <invariant>
+
+## Done when
+- [ ] <gate criterion>
+- [ ] <gate criterion>
+```
+
+### Rules
+
+- Write scratch BEFORE the first tool call on any sub-ticket.
+- Update scratch as you go — cross off done items, add discoveries.
+- If you discover your plan was wrong mid-task, update scratch first, then change course.
+- Scratch is append-only within a session. Do not delete previous entries.
+- Scratch is NOT committed. It is a working file, not a log.
+- If `logs/scratch.md` does not exist, create it.
+
+### Why This Exists
+
+Without a scratchpad, context-window pressure causes silent plan drift —
+you start sub-ticket C while mentally still executing sub-ticket A.
+The scratchpad externalizes your working state so drift is visible and
+correctable before it becomes a regression.
+
+---
+
 ## Cold-Start Context Discipline (STEP-07+)
 
 > **Critical for shared-memory deployments (ZBook: 80B + A3B on one machine).**
@@ -123,6 +174,7 @@ Exception: journal integrity fix is permitted during HALT documentation.
 - Do not put transport logic in `runner.py` or `operator_v7.py` — it belongs in `tools/delegate_task.py` only
 - Do not run integration tests in the automated gate — they are manual-only
 - Do not add spawning mechanics, orchestration loops, or process management in STEP-09
+- **Do not begin a sub-ticket without writing to `logs/scratch.md` first**
 
 ---
 
@@ -136,6 +188,7 @@ Exception: journal integrity fix is permitted during HALT documentation.
 - `context_files` on any ticket touching existing code is non-empty (lint enforced)
 - `delegate_task()` is the only function that knows about transport substrate
 - Integration tests in `tests/integration/` are always `pytest.mark.skip` by default
+- `logs/scratch.md` is written before the first tool call on any sub-ticket
 
 ---
 
