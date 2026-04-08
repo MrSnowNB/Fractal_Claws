@@ -42,6 +42,7 @@ from src.ticket_io import (
     move_ticket,
     scan_dir,
     ticket_exists,
+    lint_ticket,
     TicketIOError,
 )
 from src.operator_v7 import Ticket, TicketResult, TicketStatus, TicketPriority
@@ -493,3 +494,47 @@ class TestRunnerCompat:
         path = _write(tmp_path, "TASK-002.yaml", FULL_YAML)
         ticket = as_dict(load_ticket(path))
         assert ticket.get("depth") == 1
+
+
+# ---------------------------------------------------------------------------
+# T17 — STEP-08-A: hard_fail parameter and env var wiring
+# ---------------------------------------------------------------------------
+
+class TestHardFailParameter:
+
+    def test_hard_fail_false_allows_violations(self, tmp_path):
+        """hard_fail=False allows lint violations without raising."""
+        content = "ticket_id: TASK-HF\ntask: \n"  # empty task
+        path = _write(tmp_path, "TASK-HF.yaml", content)
+        ticket = load_ticket(path)
+        violations = lint_ticket(ticket, path, hard_fail=False)
+        assert len(violations) > 0  # empty task triggers violation
+
+    def test_hard_fail_true_raises_on_violation(self, tmp_path):
+        """hard_fail=True raises TicketIOError on lint violation."""
+        from src.ticket_io import lint_ticket, TicketIOError
+        content = "ticket_id: TASK-HF\ntask: \n"  # empty task
+        path = _write(tmp_path, "TASK-HF.yaml", content)
+        ticket = load_ticket(path)
+        with pytest.raises(TicketIOError, match="required-task"):
+            lint_ticket(ticket, path, hard_fail=True)
+
+
+class TestEnvVarHardFail:
+
+    def test_env_var_hard_fail_disabled_by_default(self, tmp_path, monkeypatch):
+        """FRACTAL_LINT_HARD_FAIL not set means no hard fail on load."""
+        monkeypatch.delenv("FRACTAL_LINT_HARD_FAIL", raising=False)
+        content = "ticket_id: TASK-ENV\ntask: \n"  # empty task
+        path = _write(tmp_path, "TASK-ENV.yaml", content)
+        ticket = load_ticket(path)  # must not raise
+        assert ticket.id == "TASK-ENV"
+
+    def test_env_var_hard_fail_enabled_raises_on_violation(self, tmp_path, monkeypatch):
+        """FRACTAL_LINT_HARD_FAIL=1 raises TicketIOError on load with violation."""
+        monkeypatch.setenv("FRACTAL_LINT_HARD_FAIL", "1")
+        from src.ticket_io import lint_ticket, TicketIOError
+        content = "ticket_id: TASK-ENV\ntask: \n"  # empty task
+        path = _write(tmp_path, "TASK-ENV.yaml", content)
+        with pytest.raises(TicketIOError, match="required-task"):
+            load_ticket(path)

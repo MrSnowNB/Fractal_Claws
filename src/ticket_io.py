@@ -233,6 +233,10 @@ def load_ticket(path: str) -> Ticket:
     # access any key via ticket._extras['key'] without breakage.
     object.__setattr__(ticket, "_extras", dict(raw))
 
+    # Lint ticket if FRACTAL_LINT_HARD_FAIL is set
+    if os.environ.get("FRACTAL_LINT_HARD_FAIL", "").strip() == "1":
+        lint_ticket(ticket, path, hard_fail=True)
+
     return ticket
 
 
@@ -312,7 +316,7 @@ def ticket_exists(ticket_id: str, directory: str) -> bool:
 _LINT_VIOLATIONS_LOG = os.path.join(LOG_DIR, "lint-violations.jsonl")
 
 
-def _log_lint_violation(ticket_id: str, rule: str, message: str, path: str) -> None:
+def _log_lint_violation(ticket_id: str, rule: str, message: str, path: str, hard_fail: bool = False) -> None:
     """Append a lint violation record to lint-violations.jsonl."""
     record = {
         "ticket_id": ticket_id,
@@ -325,9 +329,11 @@ def _log_lint_violation(ticket_id: str, rule: str, message: str, path: str) -> N
     with open(_LINT_VIOLATIONS_LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
     logger.warning("[lint] %s: %s — %s", ticket_id, rule, message)
+    if hard_fail:
+        raise TicketIOError(f"[lint] {ticket_id}: {rule} — {message}")
 
 
-def lint_ticket(ticket: Ticket, path: str) -> list[str]:
+def lint_ticket(ticket: Ticket, path: str, hard_fail: bool = False) -> list[str]:
     """
     Check a ticket for common lint violations. Warns but does not block.
     
@@ -338,12 +344,14 @@ def lint_ticket(ticket: Ticket, path: str) -> list[str]:
       - task must not exceed 500 words (practical limit)
     
     Returns list of violation messages (empty if clean).
+    Raises TicketIOError on first violation if hard_fail=True.
     """
     violations = []
     ticket_id = ticket.id
     
     # Rule: exec_python paths must start with 'output/'
-    allowed_tools = ticket.allowed_tools or []
+    # allowed_tools is in _extras, not a dataclass field
+    allowed_tools = getattr(ticket, "_extras", {}).get("allowed_tools", []) or []
     if "exec_python" in allowed_tools:
         produces = ticket.produces or []
         for prod in produces:
@@ -358,13 +366,13 @@ def lint_ticket(ticket: Ticket, path: str) -> list[str]:
                 for cf in (ticket.context_files or []):
                     if cf.endswith(".py") and not cf.startswith("output/"):
                         msg = f"exec_python target {cf} must start with 'output/'"
-                        _log_lint_violation(ticket_id, "sandbox-exec", msg, path)
+                        _log_lint_violation(ticket_id, "sandbox-exec", msg, path, hard_fail)
                         violations.append(msg)
     
     # Rule: task must be present and non-empty
     if not ticket.task or not str(ticket.task).strip():
         msg = "task field is empty or missing"
-        _log_lint_violation(ticket_id, "required-task", msg, path)
+        _log_lint_violation(ticket_id, "required-task", msg, path, hard_fail)
         violations.append(msg)
     
     # Rule: task should not exceed 500 words
@@ -372,7 +380,7 @@ def lint_ticket(ticket: Ticket, path: str) -> list[str]:
         word_count = len(str(ticket.task).split())
         if word_count > 500:
             msg = f"task is {word_count} words (limit: 500)"
-            _log_lint_violation(ticket_id, "task-length", msg, path)
+            _log_lint_violation(ticket_id, "task-length", msg, path, hard_fail)
             violations.append(msg)
     
     return violations

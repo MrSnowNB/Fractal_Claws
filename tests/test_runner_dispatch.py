@@ -3,10 +3,11 @@ import os
 import sys
 import tempfile
 import pytest
+from pathlib import Path
 
 from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
 from tools.terminal import run_command
-from src.operator_v7 import Ticket
+from src.operator_v7 import Ticket, TicketStatus, TicketPriority
 
 # Import from agent.runner (the module-level REGISTRY is already instantiated)
 import agent.runner as runner_module
@@ -178,3 +179,192 @@ def test_load_ticket_has_typed_fields(tmp_path):
     assert ticket.context_files == ["output/foo.py"]
     assert ticket.result_path == "logs/STEP-FULL-001-result.txt"
     assert ticket.max_tokens == 2048
+
+
+# ── 13. test_consumes_met_happy_path ────────────────────────────────────────────
+def test_consumes_met_happy_path(tmp_path):
+    """STEP-08-B: _consumes_met returns True when all consumed paths exist."""
+    from agent.runner import load_ticket, _consumes_met
+    
+    # Create a closed ticket with a result file
+    os.makedirs("tickets/closed", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+    
+    # Use current working directory for ticket paths (not tmp_path)
+    dep_ticket = Path("tickets/closed/STEP-CONSUME-001.yaml")
+    dep_ticket.write_text(
+        "ticket_id: STEP-CONSUME-001\n"
+        "title: Producer ticket\n"
+        "status: closed\n"
+        "produces: [output/producer.txt]\n"
+        "consumes: []\n"
+    )
+    
+    # Create result file with consumed path reference
+    result_file = Path("logs/STEP-CONSUME-001-result.txt")
+    result_file.write_text("=== tool results ===\noutput/producer.txt\n")
+    
+    # Create ticket that consumes the produced artifact
+    consumer_ticket = Path("tickets/open/STEP-CONSUME-002.yaml")
+    consumer_ticket.write_text(
+        "ticket_id: STEP-CONSUME-002\n"
+        "title: Consumer ticket\n"
+        "status: open\n"
+        "depends_on: [STEP-CONSUME-001]\n"
+        "consumes: [output/producer.txt]\n"
+    )
+    
+    ticket = load_ticket(str(consumer_ticket))
+    assert _consumes_met(ticket) is True
+    
+    # Cleanup
+    dep_ticket.unlink(missing_ok=True)
+    result_file.unlink(missing_ok=True)
+    consumer_ticket.unlink(missing_ok=True)
+
+
+# ── 14. test_consumes_met_missing_artifact ──────────────────────────────────────
+def test_consumes_met_missing_artifact(tmp_path):
+    """STEP-08-B: _consumes_met returns False when consumed path doesn't exist."""
+    from agent.runner import load_ticket, _consumes_met
+    from pathlib import Path
+    
+    os.makedirs("tickets/open", exist_ok=True)
+    
+    ticket_file = Path("tickets/open/STEP-CONSUME-003.yaml")
+    ticket_file.write_text(
+        "ticket_id: STEP-CONSUME-003\n"
+        "title: Consumer with missing artifact\n"
+        "status: open\n"
+        "depends_on: [STEP-CONSUME-001]\n"
+        "consumes: [output/nonexistent.txt]\n"
+    )
+    
+    ticket = load_ticket(str(ticket_file))
+    assert _consumes_met(ticket) is False
+    
+    ticket_file.unlink(missing_ok=True)
+
+
+# ── 15. test_consumes_met_no_consumes ────────────────────────────────────────────
+def test_consumes_met_no_consumes(tmp_path):
+    """STEP-08-B: _consumes_met returns True when no consumes are specified."""
+    from agent.runner import load_ticket, _consumes_met
+    from pathlib import Path
+    
+    os.makedirs("tickets/open", exist_ok=True)
+    
+    ticket_file = Path("tickets/open/STEP-CONSUME-004.yaml")
+    ticket_file.write_text(
+        "ticket_id: STEP-CONSUME-004\n"
+        "title: Ticket with no consumes\n"
+        "status: open\n"
+        "consumes: []\n"
+    )
+    
+    ticket = load_ticket(str(ticket_file))
+    assert _consumes_met(ticket) is True
+    
+    ticket_file.unlink(missing_ok=True)
+
+
+# ── 16. test_consumes_met_multiple_consumes ──────────────────────────────────────
+def test_consumes_met_multiple_consumes(tmp_path):
+    """STEP-08-B: _consumes_met returns True when all multiple consumed paths exist."""
+    from agent.runner import load_ticket, _consumes_met
+    from pathlib import Path
+    
+    os.makedirs("tickets/closed", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+    
+    # Create two closed tickets with result files
+    dep1_file = Path("tickets/closed/STEP-CONSUME-10A.yaml")
+    dep1_file.write_text(
+        "ticket_id: STEP-CONSUME-10A\n"
+        "title: First producer\n"
+        "status: closed\n"
+        "produces: [output/artifact_a.txt]\n"
+    )
+    Path("logs/STEP-CONSUME-10A-result.txt").write_text("=== tool results ===\noutput/artifact_a.txt\n")
+    
+    dep2_file = Path("tickets/closed/STEP-CONSUME-10B.yaml")
+    dep2_file.write_text(
+        "ticket_id: STEP-CONSUME-10B\n"
+        "title: Second producer\n"
+        "status: closed\n"
+        "produces: [output/artifact_b.txt]\n"
+    )
+    Path("logs/STEP-CONSUME-10B-result.txt").write_text("=== tool results ===\noutput/artifact_b.txt\n")
+    
+    # Consumer that consumes both artifacts
+    consumer_file = Path("tickets/open/STEP-CONSUME-10C.yaml")
+    consumer_file.write_text(
+        "ticket_id: STEP-CONSUME-10C\n"
+        "title: Multi-consumer\n"
+        "status: open\n"
+        "depends_on: [STEP-CONSUME-10A, STEP-CONSUME-10B]\n"
+        "consumes: [output/artifact_a.txt, output/artifact_b.txt]\n"
+    )
+    
+    ticket = load_ticket(str(consumer_file))
+    assert _consumes_met(ticket) is True
+    
+    # Cleanup
+    dep1_file.unlink(missing_ok=True)
+    dep2_file.unlink(missing_ok=True)
+    consumer_file.unlink(missing_ok=True)
+    Path("logs/STEP-CONSUME-10A-result.txt").unlink(missing_ok=True)
+    Path("logs/STEP-CONSUME-10B-result.txt").unlink(missing_ok=True)
+
+
+# ── 17. test_detect_deadlock_no_cycle ────────────────────────────────────────────
+def test_detect_deadlock_no_cycle(tmp_path):
+    """STEP-08-C: _detect_deadlock returns None when no cycle exists."""
+    from agent.runner import _detect_deadlock
+    
+    # Linear chain: A → B → C (no cycle)
+    open_tickets = {
+        "STEP-CHAIN-A": {"ticket_id": "STEP-CHAIN-A", "depends_on": []},
+        "STEP-CHAIN-B": {"ticket_id": "STEP-CHAIN-B", "depends_on": ["STEP-CHAIN-A"]},
+        "STEP-CHAIN-C": {"ticket_id": "STEP-CHAIN-C", "depends_on": ["STEP-CHAIN-B"]},
+    }
+    
+    result = _detect_deadlock(open_tickets)
+    assert result is None
+
+
+# ── 18. test_detect_deadlock_simple_cycle ───────────────────────────────────────
+def test_detect_deadlock_simple_cycle(tmp_path):
+    """STEP-08-C: _detect_deadlock detects a simple A↔B cycle."""
+    from agent.runner import _detect_deadlock
+    
+    # Simple cycle: A → B → A
+    open_tickets = {
+        "STEP-CYCLE-A": {"ticket_id": "STEP-CYCLE-A", "depends_on": ["STEP-CYCLE-B"]},
+        "STEP-CYCLE-B": {"ticket_id": "STEP-CYCLE-B", "depends_on": ["STEP-CYCLE-A"]},
+    }
+    
+    result = _detect_deadlock(open_tickets)
+    assert result is not None
+    assert "STEP-CYCLE-A" in result
+    assert "STEP-CYCLE-B" in result
+
+
+# ── 19. test_detect_deadlock_three_node_cycle ───────────────────────────────────
+def test_detect_deadlock_three_node_cycle(tmp_path):
+    """STEP-08-C: _detect_deadlock detects a 3-node cycle A→B→C→A."""
+    from agent.runner import _detect_deadlock
+    
+    # 3-node cycle: A → B → C → A
+    open_tickets = {
+        "STEP-CYCLE-A": {"ticket_id": "STEP-CYCLE-A", "depends_on": ["STEP-CYCLE-C"]},
+        "STEP-CYCLE-B": {"ticket_id": "STEP-CYCLE-B", "depends_on": ["STEP-CYCLE-A"]},
+        "STEP-CYCLE-C": {"ticket_id": "STEP-CYCLE-C", "depends_on": ["STEP-CYCLE-B"]},
+    }
+    
+    result = _detect_deadlock(open_tickets)
+    assert result is not None
+    assert len(result) == 3
+    assert "STEP-CYCLE-A" in result
+    assert "STEP-CYCLE-B" in result
+    assert "STEP-CYCLE-C" in result

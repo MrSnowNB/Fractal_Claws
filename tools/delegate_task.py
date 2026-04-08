@@ -63,6 +63,14 @@ def delegate_task(ticket: Ticket, open_dir: str, closed_dir: str) -> str:
     # Result path — child writes here after processing
     result_path = os.path.join(closed_dir, f"{ticket.id}.yaml")
 
+    # Propagate produces → context_files for child artifact awareness
+    produces = ticket.produces or []
+    if produces:
+        # Add produces paths to context_files so child knows what artifacts to expect
+        existing_context = ticket.context_files or []
+        new_context = list(set(existing_context + produces))
+        ticket.context_files = new_context
+
     # Write ticket to open directory (child will read this)
     save_ticket(ticket_path, ticket)
 

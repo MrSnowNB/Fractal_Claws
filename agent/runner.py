@@ -278,6 +278,98 @@ def deps_met(ticket: Ticket) -> bool:
     return all(is_closed(d) for d in (ticket.depends_on or []))
 
 
+def _detect_deadlock(open_tickets: dict) -> set | None:
+    """DFS cycle detection for ticket dependency graph.
+    
+    Args:
+        open_tickets: dict mapping ticket_id to ticket dict with depends_on field
+        
+    Returns:
+        Set of ticket_ids involved in a cycle, or None if no cycle exists
+    """
+    # Build adjacency list: ticket_id -> list of tickets it depends on
+    graph = {}
+    for tid, ticket in open_tickets.items():
+        deps = ticket.get("depends_on", []) or []
+        graph[tid] = [d for d in deps if d in open_tickets]
+    
+    # DFS with coloring: 0=unvisited, 1=in_stack, 2=completed
+    color = {tid: 0 for tid in graph}
+    cycle_participants = set()
+    
+    def dfs(node: str, path: list) -> set | None:
+        if node not in color:
+            return None  # Not an open ticket (depends on closed/failed)
+        
+        if color[node] == 1:
+            # Found cycle - extract cycle from path
+            cycle_start = path.index(node)
+            return set(path[cycle_start:])
+        if color[node] == 2:
+            return None
+        
+        color[node] = 1
+        path.append(node)
+        
+        for neighbor in graph.get(node, []):
+            result = dfs(neighbor, path)
+            if result is not None:
+                return result
+        
+        path.pop()
+        color[node] = 2
+        return None
+    
+    for node in graph:
+        if color[node] == 0:
+            result = dfs(node, [])
+            if result is not None:
+                return result
+    
+    return None
+
+
+def _consumes_met(ticket: Ticket) -> bool:
+    """Check if all consumed artifacts from dependencies are available.
+    
+    A ticket consumes the produces outputs from its depends_on tickets.
+    Returns True if all consumed paths exist (as closed tickets or result files).
+    """
+    consumes = ticket.consumes or []
+    if not consumes:
+        return True
+    
+    # For each consumed path, check if it exists anywhere
+    for consumed_path in consumes:
+        # Direct file path check
+        if os.path.exists(consumed_path):
+            continue
+        # Closed ticket result file check (look for result files from dependencies)
+        deps = ticket.depends_on or []
+        found = False
+        for dep_id in deps:
+            result_file = os.path.join(LOG_DIR, f"{dep_id}-result.txt")
+            if os.path.exists(result_file):
+                with open(result_file, 'r', encoding='utf-8') as f:
+                    if consumed_path in f.read():
+                        found = True
+                        break
+        if found:
+            continue
+        # Closed ticket check (for tickets without result files)
+        for dep_id in deps:
+            if is_closed(dep_id):
+                closed_path = os.path.join(CLOSED_DIR, f"{dep_id}.yaml")
+                if os.path.exists(closed_path):
+                    with open(closed_path, 'r', encoding='utf-8') as f:
+                        if consumed_path in f.read():
+                            found = True
+                            break
+        if not found:
+            return False
+    return True
+
+
 def next_ticket_id() -> str:
     nums = []
     for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR]:
@@ -713,10 +805,17 @@ def drain(once: bool = False) -> None:
             ticket    = load_ticket(ticket_path)
             ticket_id = ticket.id
 
-            if not deps_met(ticket):
+            if not deps_met(ticket) or not _consumes_met(ticket):
                 unmet = [d for d in (ticket.depends_on or [])
                          if not is_closed(d)]
-                print(f"[runner] deferred {ticket_id} — waiting on {unmet}")
+                unmet_consumes = [c for c in (ticket.consumes or [])
+                                  if not os.path.exists(c)]
+                reason = []
+                if unmet:
+                    reason.append(f"waiting on deps {unmet}")
+                if unmet_consumes:
+                    reason.append(f"missing consumes {unmet_consumes}")
+                print(f"[runner] deferred {ticket_id} — {'; '.join(reason)}")
                 deferred.append(ticket_path)
                 continue
 
@@ -748,6 +847,33 @@ def drain(once: bool = False) -> None:
                 return
 
         if dispatched_this_pass == 0 and deferred:
+            # STEP-08-C: Check for deadlock cycles before giving up
+            open_tickets = {}
+            for p in deferred:
+                ticket = load_ticket(p)
+                open_tickets[ticket.id] = {"ticket_id": ticket.id, "depends_on": ticket.depends_on or []}
+            
+            cycle = _detect_deadlock(open_tickets)
+            
+            if cycle:
+                print(f"[runner] DEADLOCK DETECTED: cycle involving {cycle}")
+                for p in deferred:
+                    ticket = load_ticket(p)
+                    if ticket.id in cycle:
+                        fail_path = os.path.join(FAIL_DIR, os.path.basename(p))
+                        from src.operator_v7 import TicketStatus
+                        ticket.status = TicketStatus.ESCALATED
+                        extras = getattr(ticket, "_extras", {})
+                        extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                        extras["deadlock_reason"] = "cycle"
+                        extras["cycle_participants"] = list(cycle)
+                        object.__setattr__(ticket, "_extras", extras)
+                        save_ticket(fail_path, ticket)
+                        if os.path.exists(p):
+                            os.remove(p)
+                        print(f"[runner] cycle participant → failed/{os.path.basename(p)}")
+                break
+            
             print(f"[runner] blocked — {len(deferred)} ticket(s) cannot proceed:")
             for p in deferred:
                 ticket    = load_ticket(p)
