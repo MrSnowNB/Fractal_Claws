@@ -5,6 +5,8 @@ import time
 import os
 from typing import Any, Callable, Dict, Optional
 
+from tools.delegate_task import delegate_task
+
 
 class ToolNotFoundError(Exception):
     """Raised when a tool name is not registered in the registry."""
@@ -146,3 +148,18 @@ class ToolRegistry:
     def list_tools(self) -> list[str]:
         """Return a list of registered tool names."""
         return list(self._tools.keys())
+
+
+# Global registry instance (built at import time)
+REGISTRY = ToolRegistry()
+
+# Register built-in tools
+REGISTRY.register(
+    name="delegate_task",
+    callable=delegate_task,
+    schema={
+        "ticket": {"type": dict, "required": True},
+        "open_dir": {"type": str, "required": True},
+        "closed_dir": {"type": str, "required": True},
+    },
+)

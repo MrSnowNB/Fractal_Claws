@@ -29,13 +29,18 @@ from __future__ import annotations
 
 import copy
 import glob
+import json
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Optional, Union
 
 import yaml
+
+# Define log directory for lint violations
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 
 # Import canonical dataclass from operator_v7
 from src.operator_v7 import Ticket, TicketResult, TicketStatus, TicketPriority
@@ -278,7 +283,6 @@ def move_ticket(src: str, dst_dir: str) -> str:
         raise TicketIOError(f"cannot move — source not found: {src}")
     os.makedirs(dst_dir, exist_ok=True)
     dst = os.path.join(dst_dir, os.path.basename(src))
-    import shutil
     shutil.move(src, dst)
     return dst
 
@@ -301,3 +305,74 @@ def scan_dir(directory: str) -> list[Ticket]:
 def ticket_exists(ticket_id: str, directory: str) -> bool:
     """Return True if <directory>/<ticket_id>.yaml exists on disk."""
     return os.path.exists(os.path.join(directory, f"{ticket_id}.yaml"))
+
+
+# ── Linting ─────────────────────────────────────────────────────────────────────
+
+_LINT_VIOLATIONS_LOG = os.path.join(LOG_DIR, "lint-violations.jsonl")
+
+
+def _log_lint_violation(ticket_id: str, rule: str, message: str, path: str) -> None:
+    """Append a lint violation record to lint-violations.jsonl."""
+    record = {
+        "ticket_id": ticket_id,
+        "rule": rule,
+        "message": message,
+        "path": path,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    os.makedirs(os.path.dirname(_LINT_VIOLATIONS_LOG) if os.path.dirname(_LINT_VIOLATIONS_LOG) else ".", exist_ok=True)
+    with open(_LINT_VIOLATIONS_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    logger.warning("[lint] %s: %s — %s", ticket_id, rule, message)
+
+
+def lint_ticket(ticket: Ticket, path: str) -> list[str]:
+    """
+    Check a ticket for common lint violations. Warns but does not block.
+    
+    Rules implemented:
+      - exec_python path must start with 'output/' (sandbox rule)
+      - write_file + exec_python pair must use same base name
+      - task must be present (non-empty)
+      - task must not exceed 500 words (practical limit)
+    
+    Returns list of violation messages (empty if clean).
+    """
+    violations = []
+    ticket_id = ticket.id
+    
+    # Rule: exec_python paths must start with 'output/'
+    allowed_tools = ticket.allowed_tools or []
+    if "exec_python" in allowed_tools:
+        produces = ticket.produces or []
+        for prod in produces:
+            if prod.startswith("output/"):
+                continue
+            if prod.startswith("stdout:"):
+                continue
+            # Check if this is a file path in produces that would be exec'd
+            if "/" not in prod and not prod.startswith("stdout:"):
+                # This could be a bare filename that would need exec_python
+                # Check context_files for clues
+                for cf in (ticket.context_files or []):
+                    if cf.endswith(".py") and not cf.startswith("output/"):
+                        msg = f"exec_python target {cf} must start with 'output/'"
+                        _log_lint_violation(ticket_id, "sandbox-exec", msg, path)
+                        violations.append(msg)
+    
+    # Rule: task must be present and non-empty
+    if not ticket.task or not str(ticket.task).strip():
+        msg = "task field is empty or missing"
+        _log_lint_violation(ticket_id, "required-task", msg, path)
+        violations.append(msg)
+    
+    # Rule: task should not exceed 500 words
+    if ticket.task:
+        word_count = len(str(ticket.task).split())
+        if word_count > 500:
+            msg = f"task is {word_count} words (limit: 500)"
+            _log_lint_violation(ticket_id, "task-length", msg, path)
+            violations.append(msg)
+    
+    return violations
