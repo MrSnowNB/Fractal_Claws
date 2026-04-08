@@ -51,6 +51,8 @@ from src.operator_v7 import Ticket
 
 from src.skill_store import match_goal_class, load_skill, write_skill, SkillLoadError, SkillWriteError
 
+from agent.log_manager import prune_logs
+
 
 # ── config ────────────────────────────────────────────────────────────────────
 
@@ -635,6 +637,13 @@ def execute_ticket(ticket_path: str) -> bool:
         object.__setattr__(ticket, "_extras", extras)
         dest = os.path.join(CLOSED_DIR, os.path.basename(ticket_path))
         save_ticket(dest, ticket)
+        prune_logs(
+            log_dir=LOG_DIR,
+            fail_dir=FAIL_DIR,
+            max_on_disk=int(CFG["logging"].get("max_logs", 100)),
+            min_retain=int(CFG["logging"].get("min_retain", 10)),
+            keep_escalated=bool(CFG["logging"].get("keep_escalated", True)),
+        )
         if os.path.exists(ticket_path):
             os.remove(ticket_path)
         print(f"  [runner] PASS → closed/{os.path.basename(ticket_path)}")
@@ -791,6 +800,14 @@ def write_tickets(tickets: list) -> None:
 
 def drain(once: bool = False) -> None:
     max_depth = int(CFG["tickets"].get("decrement_default", 3))
+
+    prune_logs(
+        log_dir=LOG_DIR,
+        fail_dir=FAIL_DIR,
+        max_on_disk=int(CFG["logging"].get("max_logs", 100)),
+        min_retain=int(CFG["logging"].get("min_retain", 10)),
+        keep_escalated=bool(CFG["logging"].get("keep_escalated", True)),
+    )
 
     while True:
         tickets = scan_open()
