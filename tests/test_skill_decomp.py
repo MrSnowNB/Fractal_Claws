@@ -6,7 +6,10 @@ import os
 import tempfile
 import yaml
 import pytest
+import json
+from unittest.mock import patch, MagicMock
 from src.skill_store import load_skill, write_skill, match_goal_class, SkillLoadError, SkillWriteError
+from agent.runner import execute_ticket
 
 
 class TestLevenshteinDistance:
@@ -161,3 +164,91 @@ class TestMatchGoalClass:
             task = "Word Frequency Analysis"
             result = match_goal_class(task, tmpdir)
             assert result is not None
+
+
+class TestSkillCacheHitSkipsDecompose:
+    """Test that skill cache hit skips decompose_goal in execute_ticket."""
+
+    def test_skill_cache_hit_skips_decompose(self, tmp_path):
+        """On cache hit, decompose_goal is NOT called and audit JSONL contains cache_hit=true."""
+        import yaml
+
+        # Create mock skills directory with a matching skill
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        skill_path = skills_dir / "fibonacci_generator.yaml"
+        skill_data = {
+            "goal_class": "fibonacci_generator",
+            "tool_sequence": [
+                {"tool": "write_file", "args": {"path": "output/fib.py", "content": "print(42)"}}
+            ],
+            "elapsed_s": 1.0
+        }
+        with open(skill_path, "w") as f:
+            yaml.safe_dump(skill_data, f)
+
+        # Create audit JSONL file path
+        audit_dir = tmp_path / "logs"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        audit_path = audit_dir / "audit.jsonl"
+
+        # Create a temp ticket file
+        ticket_path = tmp_path / "open" / "TASK-001.yaml"
+        ticket_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(ticket_path, "w") as f:
+            yaml.safe_dump({
+                "ticket_id": "TASK-001",
+                "title": "Test Ticket",
+                "task": "Generate Fibonacci sequence",
+                "status": "open",
+                "depth": 0,
+                "max_depth": 2,
+                "result_path": str(ticket_path.parent / "result.txt"),
+                "context_files": [],
+                "depends_on": [],
+                "allowed_tools": ["write_file", "exec_python"],
+                "agent": "Qwen3.5-35B-A3B-GGUF"
+            }, f)
+
+        # Mock all required functions including decompose_goal
+        with patch("agent.runner.match_goal_class") as mock_match, \
+             patch("agent.runner.load_skill") as mock_load, \
+             patch("agent.runner.REGISTRY") as mock_registry, \
+             patch("agent.runner.save_ticket") as mock_save, \
+             patch("agent.runner.call_model") as mock_call_model, \
+             patch("agent.runner.decompose_goal") as mock_decompose_goal, \
+             patch("agent.runner.write_skill") as mock_write_skill, \
+             patch("os.rename") as mock_rename, \
+             patch("os.path.exists") as mock_exists, \
+             patch("agent.runner.AUDIT_JSONL", str(audit_path)):
+
+            # Simulate cache hit
+            mock_match.return_value = "fibonacci_generator"
+            mock_load.return_value = skill_data
+            mock_registry.call.return_value = "OK"
+            mock_call_model.return_value = ("", 0, "stop", 0.0)
+            mock_exists.side_effect = lambda p: p == str(ticket_path)
+
+            # Execute
+            result = execute_ticket(str(ticket_path))
+
+            # Assert cache hit path was taken
+            assert result is True
+
+            # Assert decompose_goal was NOT called on cache hit
+            mock_decompose_goal.assert_not_called()
+
+            # Assert call_model was NOT called on cache hit
+            mock_call_model.assert_not_called()
+
+            # Verify audit JSONL was written with cache_hit=true
+            assert audit_path.exists(), "audit.jsonl should have been created"
+            with open(audit_path) as f:
+                lines = f.readlines()
+                assert len(lines) > 0, "audit.jsonl should have at least one entry"
+                cache_hits = [json.loads(line) for line in lines if "cache_hit" in line]
+                assert len(cache_hits) > 0, "audit.jsonl should have a cache_hit entry"
+                assert any(entry.get("cache_hit") is True for entry in cache_hits), \
+                    "cache_hit should be True in audit entry"
+                assert any(entry.get("source") == "skill_cache" for entry in cache_hits), \
+                    "source should be 'skill_cache' in audit entry"

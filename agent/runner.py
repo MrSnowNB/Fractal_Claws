@@ -49,6 +49,8 @@ from tools.terminal import run_command
 from src.ticket_io import load_ticket as _io_load_ticket
 from src.operator_v7 import Ticket
 
+from src.skill_store import match_goal_class, load_skill, write_skill, SkillLoadError, SkillWriteError
+
 
 # ── config ────────────────────────────────────────────────────────────────────
 
@@ -75,6 +77,9 @@ LOG_DIR      = CFG["logging"]["dir"].rstrip("/")
 
 for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR, IN_PROG_DIR, EXEC_SANDBOX, LOG_DIR]:
     os.makedirs(d, exist_ok=True)
+
+# Audit JSONL path for skill cache hits
+AUDIT_JSONL = os.path.join(LOG_DIR, "audit.jsonl")
 
 client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
@@ -435,6 +440,58 @@ def execute_ticket(ticket_path: str) -> bool:
     attempt_n   = depth + 1
 
     print(f"\n[runner] ── {ticket_id} (attempt {attempt_n}) ──")
+
+    # STEP-06-B: Skill cache check
+    try:
+        if ticket.task:
+            goal_class = match_goal_class(ticket.task)
+            if goal_class:
+                skill = load_skill(goal_class)
+                if skill:
+                    print(f"[runner] cache hit: {goal_class}")
+                    tool_sequence = skill.get("tool_sequence", [])
+                    # Execute tool sequence via REGISTRY
+                    tool_results = []
+                    for tool_call in tool_sequence:
+                        tool_name = tool_call.get("tool")
+                        tool_args = tool_call.get("args", {})
+                        result = REGISTRY.call(tool_name, tool_args)
+                        tool_results.append((tool_name, tool_args.get("path", "unknown"), result))
+                        print(f"[runner] skill tool: {tool_name} → {tool_args.get('path', 'unknown')}")
+                    # Write result file
+                    result_str = "\n".join(str(r) for r in tool_results)
+                    with open(result_path, "w") as f:
+                        f.write(result_str)
+                    # Mark ticket as closed
+                    from src.operator_v7 import TicketStatus
+                    ticket.status = TicketStatus.CLOSED
+                    extras = getattr(ticket, "_extras", {})
+                    extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                    extras["skill_cache_hit"] = True
+                    object.__setattr__(ticket, "_extras", extras)
+                    # Log to audit JSONL with cache hit
+                    audit_entry = {
+                        "ticket_id": ticket_id,
+                        "goal_class": goal_class,
+                        "source": "skill_cache",
+                        "cache_hit": True,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")
+                    }
+                    with open(AUDIT_JSONL, "a") as f:
+                        f.write(json.dumps(audit_entry) + "\n")
+                    # Save ticket
+                    save_ticket(ticket_path, ticket)
+                    # Move to closed
+                    closed_path = os.path.join(CLOSED_DIR, f"{ticket_id}.yaml")
+                    if ticket_path != closed_path:
+                        os.rename(ticket_path, closed_path)
+                    print(f"[runner] skill-cached result → {closed_path}")
+                    # Write skill to store
+                    write_skill(goal_class, tool_sequence)
+                    return True
+    except Exception as e:
+        print(f"[runner] skill execution failed: {e}")
+        # Fall through to model fallback
 
     upstream = inject_upstream_context(ticket)
     prompt   = build_prompt(ticket, upstream)
