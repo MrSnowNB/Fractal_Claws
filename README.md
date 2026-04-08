@@ -1,7 +1,7 @@
 ---
 title: Fractal Claws — Self-Healing Recursive Agent Harness
 version: "7.0"
-gate: "step-7-validated — 2026-04-08"
+gate: "step-8e-validated — 2026-04-08"
 ---
 
 # Fractal Claws
@@ -17,9 +17,9 @@ entirely and runs the cached toolpath directly.
 
 **One harness. Two roles. Executable memory. No cloud. Any substrate.**
 
-> **Current gate (2026-04-08):** Steps 1–7 complete and validated.  
-> `pytest tests/ -v` → 167 passed, 1 skipped, 0 failed.  
-> Step 8 (Lint Hard-Fail + Multi-Ticket Chain) is next.
+> **Current gate (2026-04-08):** Steps 1–8E complete and validated.  
+> `pytest tests/ -v` → 194 passed, 5 skipped, 0 failed.  
+> Step 8E (FIFO Log Retention) complete. Step 9 (Graphify Knowledge Graph) queued.
 
 ---
 
@@ -144,7 +144,7 @@ Skipped by default in all automated runs. Run manually on ZBook with model loade
 | 5 | Full Typed Field Migration | `pytest tests/ -v` + zero grep hits | ✅ DONE |
 | 6 | Skill-Aware Decomposition | `pytest tests/ -v` 167 passed | ✅ DONE |
 | 7 | Anchor + TicketResult + Lint + Delegate | `pytest tests/ -v` 167 passed, 1 skipped | ✅ DONE |
-| 8 | Lint Hard-Fail + Multi-Ticket Chain | TBD | ⏳ NEXT |
+| 8E | FIFO Log Retention (prune_logs) | `pytest tests/ -v` 194 passed, 5 skipped | ✅ DONE |
 | 9 | Graphify — Knowledge Graph Index | TBD | ⏳ Queued |
 
 ---
@@ -297,7 +297,7 @@ Fractal_Claws/
 | Step 5 — typed migration | `pytest tests/ -v` + zero grep hits | ✅ |
 | Step 6 — skill cache | `pytest tests/ -v` 167 passed | ✅ |
 | Step 7 — anchor+spawn | `pytest tests/ -v` 167 passed, 1 skipped | ✅ |
-| Full suite | `pytest tests/ -v` | ✅ 167 passed, 1 skipped |
+| Full suite | `pytest tests/ -v` | ✅ 194 passed, 5 skipped |
 
 ---
 
