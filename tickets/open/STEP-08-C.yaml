@@ -1,0 +1,76 @@
+ticket_id: STEP-08-C
+title: "Add _detect_deadlock() + move cycle tickets to failed + 3 new tests"
+step: STEP-08
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-08"
+updated_at: "2026-04-08"
+result_path: logs/STEP-08-C-result.txt
+depends_on: [STEP-08-B]
+allowed_tools: [read_file, write_file]
+context_files:
+  - AI-FIRST/STEP-08-LINT-CHAIN.md
+  - agent/runner.py
+  - tests/test_runner_dispatch.py
+task: >
+  Read AI-FIRST/STEP-08-LINT-CHAIN.md (STEP-08-C section) and agent/runner.py.
+
+  CHANGE 1 — agent/runner.py:
+  Add a module-level helper function
+  `_detect_deadlock(deferred_paths: list) -> list`:
+  - Load each deferred ticket (using load_ticket) and build a depends_on
+    adjacency dict restricted to ticket IDs that are in the deferred set only.
+    (Deps that are closed or open-but-not-deferred are not part of the cycle.)
+  - Run a standard DFS cycle detection (iterative or recursive — either is fine).
+    Color each node: WHITE (unvisited) = 0, GRAY (in stack) = 1, BLACK (done) = 2.
+    A GRAY → GRAY edge is a back-edge = cycle.
+  - Return a list of cycle groups. Each group is a list of ticket IDs that form
+    a cycle. Empty list means no deadlock.
+
+  In the drain() function, inside the `if dispatched_this_pass == 0 and deferred:`
+  block, after printing the per-ticket deferred reason, call _detect_deadlock.
+  If any cycle groups are found:
+    - Print: [runner] DEADLOCK detected — cycle group: [<ticket_ids>]
+    - For each deadlocked ticket: set ticket.status = TicketStatus.ESCALATED,
+      add ticket._extras["deadlock_reason"] = "cycle", save to tickets/failed/,
+      and remove from tickets/open/ if still present.
+
+  CHANGE 2 — tests/test_runner_dispatch.py:
+  Append these 3 tests (do NOT remove any existing tests).
+  Use monkeypatching or tmp_path to avoid touching real ticket directories.
+
+  test_detect_deadlock_simple_cycle:
+    Create two ticket YAML files in tmp_path:
+      DEADLOCK-A.yaml: ticket_id=DEADLOCK-A, depends_on=[DEADLOCK-B]
+      DEADLOCK-B.yaml: ticket_id=DEADLOCK-B, depends_on=[DEADLOCK-A]
+    Call _detect_deadlock([str(tmp_path/DEADLOCK-A.yaml), str(tmp_path/DEADLOCK-B.yaml)]).
+    Assert the return value is a non-empty list and both IDs appear somewhere in it.
+
+  test_detect_deadlock_no_cycle:
+    Create two ticket YAML files in tmp_path:
+      CHAIN-A.yaml: ticket_id=CHAIN-A, depends_on=[CHAIN-B]
+      CHAIN-B.yaml: ticket_id=CHAIN-B, depends_on=[]
+    Call _detect_deadlock([str(tmp_path/CHAIN-A.yaml), str(tmp_path/CHAIN-B.yaml)]).
+    Assert return value == [] (no cycle).
+
+  test_detect_deadlock_self_loop:
+    Create one ticket YAML in tmp_path:
+      SELF-A.yaml: ticket_id=SELF-A, depends_on=[SELF-A]
+    Call _detect_deadlock([str(tmp_path/SELF-A.yaml)]).
+    Assert return value is non-empty and SELF-A appears in it.
+
+  Run: python -m pytest tests/test_runner_dispatch.py -v
+  All 3 new tests plus all pre-existing tests must pass.
+  Zero failures. Zero import errors.
+rationale: >
+  Prevents the drain loop from spinning forever on a deferred-ticket stall
+  that is actually a circular dependency. Deadlocked tickets are moved to
+  failed/ with a clear reason so the operator can inspect and fix.
+produces:
+  - agent/runner.py
+  - tests/test_runner_dispatch.py
+consumes:
+  - agent/runner.py
+tags: [deadlock, cycle-detection, drain-loop, step-08]
+agent: Qwen3.5-35B-A3B-GGUF

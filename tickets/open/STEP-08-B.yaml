@@ -1,0 +1,76 @@
+ticket_id: STEP-08-B
+title: "Add _consumes_met() chain guard to drain loop + 4 new tests"
+step: STEP-08
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-08"
+updated_at: "2026-04-08"
+result_path: logs/STEP-08-B-result.txt
+depends_on: [STEP-08-A]
+allowed_tools: [read_file, write_file]
+context_files:
+  - AI-FIRST/STEP-08-LINT-CHAIN.md
+  - agent/runner.py
+  - tools/delegate_task.py
+  - tests/test_runner_dispatch.py
+task: >
+  Read AI-FIRST/STEP-08-LINT-CHAIN.md (STEP-08-B section), agent/runner.py,
+  tools/delegate_task.py, and tests/test_runner_dispatch.py.
+
+  CHANGE 1 — agent/runner.py:
+  Add a module-level helper function `_consumes_met(ticket: Ticket) -> bool`:
+  - Returns True immediately if ticket.consumes is empty or None.
+  - For each entry in ticket.consumes:
+      - If the entry starts with "stdout:", skip the disk check (ephemeral) and continue.
+      - Otherwise, check if the path exists on disk with os.path.exists(entry).
+        If the file is missing, return False.
+  - Returns True only if all non-stdout entries are present on disk.
+
+  In the drain() function, find the block that checks `deps_met(ticket)` before
+  dispatching and extend it to also check `_consumes_met(ticket)`. The full
+  guard becomes: `if not deps_met(ticket) or not _consumes_met(ticket): defer`.
+  When _consumes_met blocks a ticket, log:
+    [runner] deferred <ticket_id> — missing consumes: [<missing_paths>]
+
+  CHANGE 2 — tools/delegate_task.py:
+  When writing a child ticket file in delegate_task(), add the parent ticket's
+  `produces` list to the child ticket's `context_files` list so the child agent
+  knows what upstream artifacts to read. Only add entries from produces that are
+  not already present in context_files.
+
+  CHANGE 3 — tests/test_runner_dispatch.py:
+  Append these 4 tests (do NOT remove any existing tests):
+
+  test_consumes_met_empty:
+    Build a Ticket with consumes=[].
+    Assert _consumes_met(ticket) returns True.
+
+  test_consumes_met_file_present (tmp_path):
+    Write a real file to tmp_path / "output" / "foo.txt" (create the dir too).
+    Build a Ticket with consumes=[str(tmp_path / "output" / "foo.txt")].
+    Assert _consumes_met(ticket) returns True.
+
+  test_consumes_met_file_missing:
+    Build a Ticket with consumes=["/nonexistent/path/missing.txt"].
+    Assert _consumes_met(ticket) returns False.
+
+  test_consumes_met_stdout_skipped:
+    Build a Ticket with consumes=["stdout:fibonacci-10"].
+    Assert _consumes_met(ticket) returns True (stdout: prefix is ephemeral, no disk check).
+
+  Run: python -m pytest tests/test_runner_dispatch.py -v
+  All 4 new tests plus all pre-existing tests must pass.
+  Zero failures. Zero import errors.
+rationale: >
+  Closes the data-flow gap between produces and consumes in the drain loop.
+  Without this guard, a downstream ticket can dispatch before its upstream
+  artifact exists on disk, causing silent tool errors instead of a clean defer.
+produces:
+  - agent/runner.py
+  - tools/delegate_task.py
+  - tests/test_runner_dispatch.py
+consumes:
+  - src/ticket_io.py
+tags: [drain-loop, consumes, chain-guard, delegate-task, step-08]
+agent: Qwen3.5-35B-A3B-GGUF

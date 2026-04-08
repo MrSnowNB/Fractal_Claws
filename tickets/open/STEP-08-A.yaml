@@ -1,0 +1,65 @@
+ticket_id: STEP-08-A
+title: "Promote lint_ticket() from warn to hard-fail + 4 new tests"
+step: STEP-08
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-08"
+updated_at: "2026-04-08"
+result_path: logs/STEP-08-A-result.txt
+depends_on: []
+allowed_tools: [read_file, write_file]
+context_files:
+  - AI-FIRST/STEP-08-LINT-CHAIN.md
+  - src/ticket_io.py
+  - tests/test_ticket_io.py
+task: >
+  Read AI-FIRST/STEP-08-LINT-CHAIN.md (STEP-08-A section) and src/ticket_io.py.
+
+  CHANGE 1 — src/ticket_io.py:
+  Add a `hard_fail: bool = False` parameter to the `lint_ticket()` function
+  signature. When `hard_fail=True`, raise `TicketIOError` instead of only
+  logging a warning for any lint violation (missing required field, etc.).
+  In `load_ticket()`, check `os.environ.get("FRACTAL_LINT_HARD_FAIL", "") == "1"`
+  and pass `hard_fail=True` to `lint_ticket()` when true. Default (env var
+  absent or any other value) stays warn-only so existing tests are unaffected.
+  Do NOT change the lint-violations JSONL logging — keep that regardless of mode.
+
+  CHANGE 2 — tests/test_ticket_io.py:
+  Append these 4 tests (do NOT remove any existing tests):
+
+  test_lint_hard_fail_raises_on_missing_task:
+    Build a Ticket that is missing the `task` field (task=None or task="").
+    Call lint_ticket(ticket, hard_fail=True).
+    Use pytest.raises(TicketIOError) to assert it raises.
+
+  test_lint_hard_fail_passes_clean_ticket:
+    Build a fully-valid Ticket with all required fields populated.
+    Call lint_ticket(ticket, hard_fail=True).
+    Assert no exception is raised.
+
+  test_lint_warn_only_does_not_raise:
+    Build a Ticket missing `task` (same as first test).
+    Call lint_ticket(ticket, hard_fail=False) — the default.
+    Assert no exception is raised (warn-only mode is unchanged).
+
+  test_load_ticket_hard_fail_env_var (monkeypatch):
+    Use monkeypatch.setenv("FRACTAL_LINT_HARD_FAIL", "1").
+    Write a minimal ticket YAML to tmp_path missing the `task` field.
+    Call load_ticket(str(path)).
+    Use pytest.raises(TicketIOError) to assert it raises.
+    Restore env var after test (monkeypatch does this automatically).
+
+  Run: python -m pytest tests/test_ticket_io.py -v
+  All 4 new tests plus all pre-existing tests must pass.
+  Zero failures. Zero import errors.
+rationale: >
+  Promotes the lint gate from advisory to blocking when the operator has
+  confirmed low false-positive rates from real runs. The env-var toggle
+  lets CI and existing tests stay unaffected until explicitly opted in.
+produces:
+  - src/ticket_io.py
+  - tests/test_ticket_io.py
+consumes: []
+tags: [lint, hard-fail, ticket-io, validation, step-08]
+agent: Qwen3.5-35B-A3B-GGUF

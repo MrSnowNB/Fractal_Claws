@@ -1,0 +1,71 @@
+ticket_id: STEP-08-D
+title: "Gate run, full-anchor journal entry, mark Step 8 DONE, commit + push"
+step: STEP-08
+status: open
+depth: 0
+max_depth: 2
+created_at: "2026-04-08"
+updated_at: "2026-04-08"
+result_path: logs/STEP-08-D-result.txt
+depends_on: [STEP-08-C]
+allowed_tools: [read_file, write_file, run_command]
+context_files:
+  - AI-FIRST/STEP-08-LINT-CHAIN.md
+  - AI-FIRST/NEXT-STEPS.md
+  - logs/luffy-journal.jsonl
+task: >
+  Read AI-FIRST/STEP-08-LINT-CHAIN.md (STEP-08-D section),
+  AI-FIRST/NEXT-STEPS.md, and logs/luffy-journal.jsonl.
+
+  STEP 1 — Gate run:
+  Run: python -m pytest tests/ -v
+  All tests must pass. 1 skipped is permitted (the platform-conditional
+  test_run_command_blocked_unix or test_run_command_blocked_windows depending
+  on whether this is Windows or Ubuntu). Zero failures required.
+  If any test fails, STOP — fix before proceeding.
+
+  STEP 2 — Validate journal integrity:
+  Read logs/luffy-journal.jsonl. Parse every line as JSON.
+  If any line is malformed JSON, do NOT rewrite it — instead split the
+  offending content and correct only the broken boundary, then re-read.
+  The last valid entry must have a step field. Report the last step found.
+
+  STEP 3 — Append journal entry:
+  Append exactly ONE new line to logs/luffy-journal.jsonl (append, never
+  overwrite). The line must be valid JSON followed by a single newline.
+  Use the schema below — fill in the real ISO-8601 timestamp:
+
+  {"ts": "<ISO-8601>", "step": "STEP-08-D", "action": "Gate green. Lint hard-fail promoted. Consumes chain guard added. Deadlock detection added.", "status": "done", "files": ["src/ticket_io.py", "agent/runner.py", "tools/delegate_task.py", "tests/test_ticket_io.py", "tests/test_runner_dispatch.py", "AI-FIRST/NEXT-STEPS.md"], "anchor": {"system_state": "Lint gate hard-fails on FRACTAL_LINT_HARD_FAIL=1; drain loop guards consumes + deadlock; all tests green.", "open_invariants": ["lint_ticket() warn-only by default; hard-fail only when env var set", "_consumes_met() blocks dispatch until produces artifacts are on disk", "_detect_deadlock() moves cycle participants to tickets/failed/ with reason=deadlock"], "next_entry_point": "STEP-09-A: read AI-FIRST/NEXT-STEPS.md Step 9 block; build tools/graphify.py AST walker first"}}
+
+  STEP 4 — Update NEXT-STEPS.md:
+  In AI-FIRST/NEXT-STEPS.md, change the Step 8 header from:
+    ### [ ] Step 8: Lint Hard-Fail + Multi-Ticket Chain
+  to:
+    ### [x] DONE — Step 8: Lint Hard-Fail + Multi-Ticket Chain
+  Add a Gate line below matching the other DONE steps:
+    **Gate:** `pytest tests/ -v` ✅ <N> passed, 1 skipped, 0 failed
+  Replace <N> with the actual count from the pytest run in STEP 1.
+
+  STEP 5 — Commit and push:
+  Stage all modified files:
+    git add src/ticket_io.py agent/runner.py tools/delegate_task.py
+    git add tests/test_ticket_io.py tests/test_runner_dispatch.py
+    git add AI-FIRST/NEXT-STEPS.md logs/luffy-journal.jsonl
+  Commit:
+    git commit -m "STEP-08: lint hard-fail + consumes chain guard + deadlock detection"
+  Push:
+    git push
+rationale: >
+  Closes Step 8 with a full-anchor journal entry (correcting the flat-string
+  anchor debt from STEP-07-F) and marks the step DONE in the build queue.
+  The anchor object is the cold-start signal for the next agent session.
+produces:
+  - logs/luffy-journal.jsonl
+  - AI-FIRST/NEXT-STEPS.md
+consumes:
+  - src/ticket_io.py
+  - agent/runner.py
+  - tests/test_ticket_io.py
+  - tests/test_runner_dispatch.py
+tags: [gate, journal, anchor, commit, push, step-08]
+agent: Qwen3.5-35B-A3B-GGUF
