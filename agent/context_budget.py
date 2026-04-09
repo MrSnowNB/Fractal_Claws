@@ -209,3 +209,73 @@ class ContextBudget:
         """Reset per-session tracking (call at SESSION_START)."""
         self._session_reads.clear()
         self._zone_usage = {z: 0 for z in self.zones}
+
+    # ── graphify_repo() ───────────────────────────────────────────────────────
+
+    def graphify_repo(self, repo_path: str = "tickets/closed") -> dict:
+        """Build a knowledge graph from tickets in a directory.
+
+        Args:
+            repo_path: Directory containing ticket YAML files (default: tickets/closed)
+
+        Returns:
+            Graph dict with nodes, edges, and metadata
+        """
+        from pathlib import Path
+
+        graph = {
+            "nodes": [],
+            "edges": [],
+            "metadata": {
+                "source_dir": repo_path,
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "ticket_count": 0,
+            },
+        }
+
+        tickets_dir = Path(repo_path)
+        if not tickets_dir.exists():
+            graph["metadata"]["error"] = f"Directory not found: {repo_path}"
+            return graph
+
+        ticket_files = list(tickets_dir.glob("*.yaml"))
+        graph["metadata"]["ticket_count"] = len(ticket_files)
+
+        for ticket_file in ticket_files:
+            try:
+                content = ticket_file.read_text(encoding="utf-8")
+                # Basic YAML parsing without external deps
+                node = {
+                    "id": ticket_file.stem,
+                    "label": ticket_file.stem,
+                    "type": "ticket",
+                    "file": str(ticket_file),
+                    "content_hash": self.file_hash(str(ticket_file)),
+                    "tokens": self.estimate_tokens(content),
+                }
+                graph["nodes"].append(node)
+
+                # Extract parent relationship if present (STEP-09 → STEP-10-A)
+                if ticket_file.stem.count("-") > 1:
+                    parent_id = "-".join(ticket_file.stem.split("-")[:-1])
+                    graph["edges"].append({
+                        "from": parent_id,
+                        "to": ticket_file.stem,
+                        "type": "depends_on",
+                    })
+            except Exception as e:
+                graph["metadata"].setdefault("errors", []).append(
+                    f"{ticket_file.stem}: {str(e)}"
+                )
+
+        # Deduplicate edges
+        seen = set()
+        unique_edges = []
+        for edge in graph["edges"]:
+            key = (edge["from"], edge["to"], edge["type"])
+            if key not in seen:
+                seen.add(key)
+                unique_edges.append(edge)
+        graph["edges"] = unique_edges
+
+        return graph
