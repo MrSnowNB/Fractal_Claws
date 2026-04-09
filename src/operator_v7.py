@@ -131,6 +131,13 @@ class Ticket:
     graph_scope: Optional[Dict[str, Any]] = None
     return_to: Optional[str] = None
 
+    # v7 fields (ported from MUMPS_Bot — structured execution)
+    task_steps: List[str] = field(default_factory=list)
+    gate_command: str = ""
+    acceptance_criteria: str = ""
+    max_retries: Optional[int] = None
+    allowed_tools: List[str] = field(default_factory=list)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert ticket to dictionary."""
         result_dict = None
@@ -165,6 +172,11 @@ class Ticket:
             "agent": self.agent,
             "graph_scope": self.graph_scope,
             "return_to": self.return_to,
+            "task_steps": self.task_steps,
+            "gate_command": self.gate_command,
+            "acceptance_criteria": self.acceptance_criteria,
+            "max_retries": self.max_retries,
+            "allowed_tools": self.allowed_tools,
         }
     
     @classmethod
@@ -218,6 +230,11 @@ class Ticket:
             agent=data.get("agent", ""),
             graph_scope=data.get("graph_scope"),
             return_to=data.get("return_to"),
+            task_steps=data.get("task_steps", []),
+            gate_command=data.get("gate_command", ""),
+            acceptance_criteria=data.get("acceptance_criteria", ""),
+            max_retries=data.get("max_retries"),
+            allowed_tools=data.get("allowed_tools", []),
         )
 
 

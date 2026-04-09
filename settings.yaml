@@ -47,6 +47,9 @@ model:
     - computer_use
     - code_interpreter
 
+agent:
+  stage: bud     # bud | branch | planted | rooted | rook
+
 tickets:
   open_dir: tickets/open
   in_progress_dir: tickets/in_progress
@@ -54,6 +57,7 @@ tickets:
   failed_dir: tickets/failed
   template: tickets/template.yaml
   max_open: 5
+  max_retries_default: 2
   decrement_default: 3
 
 validation:
