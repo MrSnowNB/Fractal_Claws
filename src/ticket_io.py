@@ -86,6 +86,10 @@ _DEFAULTS: dict = {
     "context_files": [],
     "max_tokens":    None,
     "max_depth":     2,
+    "task_steps":    [],
+    "gate_command":  "",
+    "acceptance_criteria": "",
+    "max_retries":   None,
 }
 
 
@@ -227,6 +231,11 @@ def load_ticket(path: str) -> Ticket:
         consumes=raw.get("consumes", []),
         tags=raw.get("tags", []),
         agent=raw.get("agent", ""),
+        task_steps=raw.get("task_steps", []),
+        gate_command=raw.get("gate_command", ""),
+        acceptance_criteria=raw.get("acceptance_criteria", ""),
+        max_retries=raw.get("max_retries"),
+        allowed_tools=raw.get("allowed_tools", []),
     )
 
     # _extras mirrors the full raw dict so tests and runner.py can still

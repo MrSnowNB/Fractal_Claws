@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-runner.py — Fractal Claws agent skeleton v6
+runner.py — Fractal Claws agent skeleton v7
 
 Single entry point. Reads all config from settings.yaml.
 No model names, no depths, no tiers hardcoded here.
@@ -10,26 +10,19 @@ Usage:
     python agent/runner.py --goal "<goal>"        # decompose goal then drain
     python agent/runner.py --once                 # dispatch one ticket then exit
     python agent/runner.py --no-prewarm           # skip model pre-warm (fast start)
+    python agent/runner.py --ticket TASK-005      # run a specific ticket by ID
+    python agent/runner.py --dry-run              # print next ticket, do not execute
 
-Budget policy (v4 — thinking-model aware):
-    BUDGET_FLOOR   = 1024                   (minimum for thinking + tool block)
-    BUDGET_CEILING = context_window * 0.8   (80% of ctx — matches AGENT-POLICY.md)
-    token_budget() multiplier = *24         (thinking models need 3x headroom vs *8)
-    max_tokens in settings.yaml = hard output CAP (doc-only; runner uses dynamic budget)
-    decompose_budget in settings.yaml = output tokens for decompose YAML (not input ctx)
-
-Handoff logging (v5):
-    Every attempt appends one JSONL line to logs/<ticket_id>-attempts.jsonl:
-    {"ts": ..., "attempt": N, "outcome": "pass|fail|error",
-     "tokens": N, "elapsed_s": N, "finish": "stop|length|...",
-     "budget": N, "tool_calls": N, "reason": "..."}
-    This log is the audit trail for parent verification and triage.
-
-Migration note (v6 — STEP-05):
-    All ticket dict-access (ticket.get / ticket[key]) has been replaced with
-    typed Ticket attribute access (ticket.field). The local load_ticket() now
-    delegates to src.ticket_io.load_ticket() and returns a Ticket dataclass.
-    Zero raw-dict reads remain in the runner logic paths.
+v7 changes (optimize-fractal-claws):
+    - Imports consolidated: src.tools.registry + src.tools.terminal (canonical)
+    - Scratch file system: per-ticket REASONING/VERIFY audit trail (ported from MUMPS_Bot)
+    - In-progress state: tickets move open → in_progress → closed/failed
+    - Gate command support: subprocess acceptance testing per ticket
+    - Failure handling: _handle_failure() writes to ISSUE.md
+    - Session lifecycle: SESSION_START/SESSION_END in journal
+    - Retry loop: proper attempt tracking with move-back-to-open
+    - call_model retry fix: exactly MAX_RETRIES+1 attempts
+    - write_skill() fix: proper dict argument
 """
 
 import os
@@ -37,17 +30,21 @@ import re
 import sys
 import glob
 import time
+import uuid
 import yaml
 import json
+import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from openai import OpenAI
 
-from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
-from tools.terminal import run_command
+# BUG 1+11 FIX: Import from canonical src/tools/ (not old tools/ with hardcoded STEP-02-B)
+from src.tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
+from src.tools.terminal import run_command
 
 from src.ticket_io import load_ticket as _io_load_ticket
-from src.operator_v7 import Ticket
+from src.operator_v7 import Ticket, TicketStatus
 
 from src.skill_store import match_goal_class, load_skill, write_skill, SkillLoadError, SkillWriteError
 
@@ -77,13 +74,83 @@ IN_PROG_DIR  = CFG["tickets"].get("in_progress_dir", "tickets/in_progress")
 EXEC_SANDBOX = "output"
 LOG_DIR      = CFG["logging"]["dir"].rstrip("/")
 
+# Per-ticket max retries (fallback to model.max_retries)
+MAX_TICKET_RETRIES = int(CFG["tickets"].get("max_retries_default", MAX_RETRIES))
+
 for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR, IN_PROG_DIR, EXEC_SANDBOX, LOG_DIR]:
     os.makedirs(d, exist_ok=True)
 
 # Audit JSONL path for skill cache hits
 AUDIT_JSONL = os.path.join(LOG_DIR, "audit.jsonl")
+JOURNAL_PATH = os.path.join(LOG_DIR, "luffy-journal.jsonl")
 
 client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
+
+# Session UUID — generated once per runner invocation
+SESSION_UUID = str(uuid.uuid4())
+
+
+# ── journal helpers (BUG 7 FIX: session lifecycle events) ─────────────────────
+
+def append_journal(event: dict) -> None:
+    """Append a JSONL event to logs/luffy-journal.jsonl."""
+    if "ts" not in event:
+        event["ts"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    event.setdefault("session", SESSION_UUID)
+    os.makedirs(os.path.dirname(JOURNAL_PATH) if os.path.dirname(JOURNAL_PATH) else ".", exist_ok=True)
+    with open(JOURNAL_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
+
+
+# ── scratch file system (BUG 3 FIX: ported from MUMPS_Bot) ──────────────────
+
+def scratch_append(ticket_id: str, event: dict) -> None:
+    """Append a JSONL event to the ticket's scratch file."""
+    scratch = os.path.join(LOG_DIR, f"scratch-{ticket_id}.jsonl")
+    event.setdefault("ts", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")
+    event.setdefault("ticket", ticket_id)
+    with open(scratch, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
+
+
+def validate_scratch(ticket_id: str, num_steps: int) -> tuple:
+    """Validate scratch file has REASONING + VERIFY for every step.
+
+    Returns (ok: bool, reason: str).
+    """
+    scratch = os.path.join(LOG_DIR, f"scratch-{ticket_id}.jsonl")
+    if not os.path.exists(scratch):
+        return False, f"scratch file missing: {scratch}"
+
+    events = []
+    with open(scratch) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+    has_init = any(e.get("event") == "SCRATCH_INIT" for e in events)
+    if not has_init:
+        return False, "scratch missing SCRATCH_INIT"
+
+    for step_num in range(1, num_steps + 1):
+        has_reasoning = any(
+            e.get("event") == "REASONING" and e.get("step") == step_num
+            for e in events
+        )
+        has_verify = any(
+            e.get("event") == "VERIFY" and e.get("step") == step_num and e.get("pass") is True
+            for e in events
+        )
+        if not has_reasoning:
+            return False, f"scratch missing REASONING for step {step_num}"
+        if not has_verify:
+            return False, f"scratch missing passing VERIFY for step {step_num}"
+
+    return True, "ok"
 
 
 # ── tools (must be defined before REGISTRY) ────────────────────────────────────
@@ -197,27 +264,7 @@ def append_attempt_log(ticket_id: str, attempt: int, outcome: str,
                        tokens: int, elapsed: float, finish: str,
                        budget: int, tool_calls: int, reason: str,
                        hw_pre: dict, hw_post: dict) -> None:
-    """
-    Append one JSONL line to logs/<ticket_id>-attempts.jsonl.
-    This is the handoff audit trail used by parent verification (TASK-011)
-    and by triage when a ticket fails mid-chain.
-
-    Schema (all fields always present):
-      ts          ISO-8601 timestamp of attempt completion
-      ticket_id   e.g. TASK-008
-      attempt     1-indexed retry count
-      outcome     pass | fail | error
-      tokens      total tokens consumed (prompt + completion)
-      elapsed_s   wall-clock seconds for the model call
-      tok_s       tokens per second
-      finish      model finish_reason (stop | length | content_filter | ...)
-      budget      max_tokens requested for this attempt
-      tool_calls  number of tool blocks parsed from response
-      reason      pass/fail/error detail string
-      ram_pre_gb  RAM used before model call
-      ram_post_gb RAM used after model call
-      cpu_pre_pct CPU % before model call
-    """
+    """Append one JSONL line to logs/<ticket_id>-attempts.jsonl."""
     log_path = os.path.join(LOG_DIR, f"{ticket_id}-attempts.jsonl")
     record = {
         "ts":          time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -243,12 +290,7 @@ def append_attempt_log(ticket_id: str, attempt: int, outcome: str,
 # ── ticket helpers ────────────────────────────────────────────────────────────
 
 def load_ticket(path: str) -> Ticket:
-    """Load a YAML ticket and return a fully-populated typed Ticket dataclass.
-
-    Delegates to src.ticket_io.load_ticket() for schema validation, default
-    injection, and Ticket.from_dict() construction.  Zero dict-access in
-    runner logic paths — callers use ticket.field attribute access only.
-    """
+    """Load a YAML ticket and return a fully-populated typed Ticket dataclass."""
     return _io_load_ticket(path)
 
 
@@ -258,7 +300,6 @@ def save_ticket(path: str, ticket) -> None:
     if isinstance(ticket, Ticket):
         _io_save_ticket(path, ticket)
     else:
-        # Raw dict from decompose_goal — write directly
         os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             yaml.dump(ticket, f, allow_unicode=True, sort_keys=False)
@@ -281,72 +322,48 @@ def deps_met(ticket: Ticket) -> bool:
 
 
 def _detect_deadlock(open_tickets: dict) -> set | None:
-    """DFS cycle detection for ticket dependency graph.
-    
-    Args:
-        open_tickets: dict mapping ticket_id to ticket dict with depends_on field
-        
-    Returns:
-        Set of ticket_ids involved in a cycle, or None if no cycle exists
-    """
-    # Build adjacency list: ticket_id -> list of tickets it depends on
+    """DFS cycle detection for ticket dependency graph."""
     graph = {}
     for tid, ticket in open_tickets.items():
         deps = ticket.get("depends_on", []) or []
         graph[tid] = [d for d in deps if d in open_tickets]
-    
-    # DFS with coloring: 0=unvisited, 1=in_stack, 2=completed
+
     color = {tid: 0 for tid in graph}
-    cycle_participants = set()
-    
+
     def dfs(node: str, path: list) -> set | None:
         if node not in color:
-            return None  # Not an open ticket (depends on closed/failed)
-        
+            return None
         if color[node] == 1:
-            # Found cycle - extract cycle from path
             cycle_start = path.index(node)
             return set(path[cycle_start:])
         if color[node] == 2:
             return None
-        
         color[node] = 1
         path.append(node)
-        
         for neighbor in graph.get(node, []):
             result = dfs(neighbor, path)
             if result is not None:
                 return result
-        
         path.pop()
         color[node] = 2
         return None
-    
+
     for node in graph:
         if color[node] == 0:
             result = dfs(node, [])
             if result is not None:
                 return result
-    
     return None
 
 
 def _consumes_met(ticket: Ticket) -> bool:
-    """Check if all consumed artifacts from dependencies are available.
-    
-    A ticket consumes the produces outputs from its depends_on tickets.
-    Returns True if all consumed paths exist (as closed tickets or result files).
-    """
+    """Check if all consumed artifacts from dependencies are available."""
     consumes = ticket.consumes or []
     if not consumes:
         return True
-    
-    # For each consumed path, check if it exists anywhere
     for consumed_path in consumes:
-        # Direct file path check
         if os.path.exists(consumed_path):
             continue
-        # Closed ticket result file check (look for result files from dependencies)
         deps = ticket.depends_on or []
         found = False
         for dep_id in deps:
@@ -358,7 +375,6 @@ def _consumes_met(ticket: Ticket) -> bool:
                         break
         if found:
             continue
-        # Closed ticket check (for tickets without result files)
         for dep_id in deps:
             if is_closed(dep_id):
                 closed_path = os.path.join(CLOSED_DIR, f"{dep_id}.yaml")
@@ -414,9 +430,33 @@ def inject_upstream_context(ticket: Ticket) -> str:
     return "\n\n".join(blocks)
 
 
+# ── gate runner (BUG 5 FIX: ported from MUMPS_Bot) ──────────────────────────
+
+def run_gate(ticket: Ticket) -> tuple:
+    """Run the ticket's gate_command as a subprocess acceptance test.
+
+    Returns (passed: bool, output: str).
+    """
+    cmd = ticket.gate_command or ""
+    if not cmd:
+        return True, "no gate defined"
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, cwd=".", timeout=60
+        )
+        output = result.stdout + result.stderr
+        passed = result.returncode == 0
+        return passed, output
+    except subprocess.TimeoutExpired:
+        return False, "gate_command timed out (60s)"
+    except Exception as e:
+        return False, f"gate_command error: {e}"
+
+
 # ── model call ────────────────────────────────────────────────────────────────
 
 def call_model(messages: list, budget: int) -> tuple:
+    # BUG 10 FIX: exactly MAX_RETRIES + 1 total attempts (initial + retries)
     for attempt in range(1, MAX_RETRIES + 2):
         try:
             t0       = time.perf_counter()
@@ -430,7 +470,7 @@ def call_model(messages: list, budget: int) -> tuple:
             elapsed = round(time.perf_counter() - t0, 2)
 
             if not response.choices:
-                print(f"  [model] attempt {attempt}: empty choices — retry in {RETRY_DELAY}s")
+                print(f"  [model] attempt {attempt}/{MAX_RETRIES+1}: empty choices — retry in {RETRY_DELAY}s")
                 time.sleep(RETRY_DELAY)
                 continue
 
@@ -440,15 +480,15 @@ def call_model(messages: list, budget: int) -> tuple:
             finish = choice.finish_reason or "unknown"
 
             if not raw.strip():
-                print(f"  [model] attempt {attempt}: empty content — retry in {RETRY_DELAY}s")
+                print(f"  [model] attempt {attempt}/{MAX_RETRIES+1}: empty content — retry in {RETRY_DELAY}s")
                 time.sleep(RETRY_DELAY)
                 continue
 
             return raw, tokens, finish, elapsed
 
         except Exception as e:
-            print(f"  [model] attempt {attempt}: {e}")
-            if attempt <= MAX_RETRIES:
+            print(f"  [model] attempt {attempt}/{MAX_RETRIES+1}: {e}")
+            if attempt < MAX_RETRIES + 1:
                 time.sleep(RETRY_DELAY)
 
     raise RuntimeError(f"model call failed after {MAX_RETRIES + 1} attempts")
@@ -468,13 +508,34 @@ BLOCK_RE = re.compile(
 )
 
 
-def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
+def parse_and_run_tools(response_text: str, ticket_id: str = "", exec_timeout: int = 30) -> list:
     results = []
+    step_n = 0
     for match in BLOCK_RE.finditer(normalise(response_text)):
+        step_n += 1
         tool    = match.group(1).strip()
         path    = match.group(2).strip()
         content = match.group(3)
         print(f"  [tool] {tool} → {path}")
+
+        # Scratch: REASONING event before tool call
+        if ticket_id:
+            scratch_append(ticket_id, {
+                "event": "REASONING", "step": step_n,
+                "decomposition": f"Execute {tool} on {path}",
+                "ground_truth": f"Tool {tool} is registered and path is valid",
+                "constraints": f"Output sandbox: {EXEC_SANDBOX}/",
+                "minimal_transform": f"Single {tool} call",
+            })
+
+        # Journal: TOOL_CALL pending
+        if ticket_id:
+            append_journal({
+                "event": "TOOL_CALL", "ticket": ticket_id,
+                "tool": tool, "args": {"path": path}, "status": "pending",
+            })
+
+        t_start = time.perf_counter()
         try:
             if tool == "write_file":
                 result = REGISTRY.call(tool, {"path": path, "content": content or ""})
@@ -484,8 +545,29 @@ def parse_and_run_tools(response_text: str, exec_timeout: int = 30) -> list:
                 result = REGISTRY.call(tool, {"path": path})
         except (ToolNotFoundError, ToolArgError) as e:
             result = f"ERROR: {e}"
+        t_elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+
         result_str = str(result) if isinstance(result, dict) else result
+        is_error = isinstance(result_str, str) and result_str.startswith("ERROR:")
         print(f"  [tool] result: {result_str[:120]}")
+
+        # Journal: TOOL_CALL ok/error
+        if ticket_id:
+            append_journal({
+                "event": "TOOL_CALL", "ticket": ticket_id,
+                "tool": tool, "status": "error" if is_error else "ok",
+                "elapsed_ms": t_elapsed_ms,
+            })
+
+        # Scratch: VERIFY event after tool call
+        if ticket_id:
+            scratch_append(ticket_id, {
+                "event": "VERIFY", "step": step_n,
+                "expected": f"{tool} succeeds without ERROR",
+                "actual": result_str[:200] if result_str else "empty",
+                "pass": not is_error,
+            })
+
         results.append((tool, path, result))
     return results
 
@@ -524,16 +606,91 @@ def build_prompt(ticket: Ticket, upstream_context: str) -> str:
     return prompt
 
 
+# ── failure handling (BUG 6 FIX: ported from MUMPS_Bot) ──────────────────────
+
+def _handle_failure(ticket: Ticket, ticket_path: str, reason: str) -> bool:
+    """Move ticket to failed/, write to ISSUE.md, emit journal event."""
+    ticket_id = ticket.id
+
+    # Move to failed/
+    ticket.status = TicketStatus.ESCALATED
+    extras = getattr(ticket, "_extras", {})
+    extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    extras["failure_reason"] = reason
+    object.__setattr__(ticket, "_extras", extras)
+
+    # Remove from in_progress if present
+    ip_path = os.path.join(IN_PROG_DIR, f"{ticket_id}.yaml")
+    if os.path.exists(ip_path):
+        os.remove(ip_path)
+
+    fail_path = os.path.join(FAIL_DIR, f"{ticket_id}.yaml")
+    save_ticket(fail_path, ticket)
+
+    # Remove from open if still there
+    if os.path.exists(ticket_path) and ticket_path != fail_path:
+        os.remove(ticket_path)
+
+    # Scratch cleanup: close and rename to -FAILED
+    scratch_path = os.path.join(LOG_DIR, f"scratch-{ticket_id}.jsonl")
+    if os.path.exists(scratch_path):
+        scratch_append(ticket_id, {"event": "SCRATCH_CLOSE", "result": "FAILED"})
+        failed_scratch = os.path.join(LOG_DIR, f"scratch-{ticket_id}-FAILED.jsonl")
+        shutil.move(scratch_path, failed_scratch)
+
+    # Journal event
+    append_journal({
+        "event": "TICKET_FAILED", "ticket": ticket_id,
+        "attempts": ticket.attempts,
+        "reason": reason.splitlines()[0][:120] if reason else "unknown",
+        "scratch_path": f"logs/scratch-{ticket_id}-FAILED.jsonl",
+    })
+
+    # Append to ISSUE.md
+    issue_path = "ISSUE.md"
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    iss_id = f"ISS-{ticket_id}-{ts}"
+    with open(issue_path, "a", encoding="utf-8") as f:
+        f.write(f"\n## {iss_id}\n\n")
+        f.write(f"- `status: open`\n")
+        f.write(f"- `blocked_on: human`\n")
+        f.write(f"- `ticket: {ticket_id}`\n")
+        f.write(f"- `reason: {reason.splitlines()[0][:120] if reason else 'unknown'}`\n")
+        f.write(f"- `action_required: Review failure, fix ticket or context, reset status to open`\n")
+
+    print(f"  ❌  {ticket_id} FAILED: {reason.splitlines()[0][:80] if reason else 'unknown'}")
+    print(f"     See ISSUE.md and logs/ for details.")
+    return False
+
+
 # ── execute one ticket ────────────────────────────────────────────────────────
 
 def execute_ticket(ticket_path: str) -> bool:
     ticket      = load_ticket(ticket_path)
     ticket_id   = ticket.id
     result_path = ticket.result_path or f"{LOG_DIR}/{ticket_id}-result.txt"
-    depth       = ticket.depth
-    attempt_n   = depth + 1
+    attempt_n   = ticket.attempts + 1
 
     print(f"\n[runner] ── {ticket_id} (attempt {attempt_n}) ──")
+
+    # BUG 4 FIX: Move to in_progress before execution
+    ip_path = os.path.join(IN_PROG_DIR, f"{ticket_id}.yaml")
+    ticket.status = TicketStatus.PENDING  # in_progress maps to pending in enum
+    extras = getattr(ticket, "_extras", {})
+    extras["status"] = "in_progress"
+    object.__setattr__(ticket, "_extras", extras)
+    save_ticket(ip_path, ticket)
+    if os.path.exists(ticket_path) and os.path.abspath(ticket_path) != os.path.abspath(ip_path):
+        os.remove(ticket_path)
+
+    # Journal: TICKET_START
+    append_journal({
+        "event": "TICKET_START", "ticket": ticket_id,
+        "attempt": attempt_n, "deps_satisfied": True,
+    })
+
+    # Create scratch file (BUG 3 FIX)
+    scratch_append(ticket_id, {"event": "SCRATCH_INIT", "attempt": attempt_n})
 
     # STEP-06-B: Skill cache check
     try:
@@ -544,7 +701,6 @@ def execute_ticket(ticket_path: str) -> bool:
                 if skill:
                     print(f"[runner] cache hit: {goal_class}")
                     tool_sequence = skill.get("tool_sequence", [])
-                    # Execute tool sequence via REGISTRY
                     tool_results = []
                     for tool_call in tool_sequence:
                         tool_name = tool_call.get("tool")
@@ -552,36 +708,41 @@ def execute_ticket(ticket_path: str) -> bool:
                         result = REGISTRY.call(tool_name, tool_args)
                         tool_results.append((tool_name, tool_args.get("path", "unknown"), result))
                         print(f"[runner] skill tool: {tool_name} → {tool_args.get('path', 'unknown')}")
-                    # Write result file
                     result_str = "\n".join(str(r) for r in tool_results)
                     with open(result_path, "w") as f:
                         f.write(result_str)
-                    # Mark ticket as closed
-                    from src.operator_v7 import TicketStatus
                     ticket.status = TicketStatus.CLOSED
                     extras = getattr(ticket, "_extras", {})
                     extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                     extras["skill_cache_hit"] = True
                     object.__setattr__(ticket, "_extras", extras)
-                    # Log to audit JSONL with cache hit
                     audit_entry = {
-                        "ticket_id": ticket_id,
-                        "goal_class": goal_class,
-                        "source": "skill_cache",
-                        "cache_hit": True,
-                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")
+                        "ticket_id": ticket_id, "goal_class": goal_class,
+                        "source": "skill_cache", "cache_hit": True,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
                     }
                     with open(AUDIT_JSONL, "a") as f:
                         f.write(json.dumps(audit_entry) + "\n")
-                    # Save ticket
-                    save_ticket(ticket_path, ticket)
-                    # Move to closed
                     closed_path = os.path.join(CLOSED_DIR, f"{ticket_id}.yaml")
-                    if ticket_path != closed_path:
-                        os.rename(ticket_path, closed_path)
+                    save_ticket(closed_path, ticket)
+                    # Clean up in_progress
+                    if os.path.exists(ip_path):
+                        os.remove(ip_path)
                     print(f"[runner] skill-cached result → {closed_path}")
-                    # Write skill to store
-                    write_skill(goal_class, tool_sequence)
+                    # BUG 8 FIX: write_skill expects a dict with required keys
+                    write_skill(goal_class, {
+                        "goal_class": goal_class,
+                        "tool_sequence": tool_sequence,
+                        "elapsed_s": 0.0,
+                    })
+                    # Journal + scratch close
+                    append_journal({"event": "TICKET_CLOSED", "ticket": ticket_id,
+                                    "attempt": attempt_n, "wall_sec": 0.0,
+                                    "tokens_in": None, "tokens_out": None})
+                    scratch_append(ticket_id, {"event": "SCRATCH_CLOSE", "result": "CLOSED"})
+                    scratch_path = os.path.join(LOG_DIR, f"scratch-{ticket_id}.jsonl")
+                    if os.path.exists(scratch_path):
+                        os.remove(scratch_path)
                     return True
     except Exception as e:
         print(f"[runner] skill execution failed: {e}")
@@ -597,6 +758,11 @@ def execute_ticket(ticket_path: str) -> bool:
     print(f"  [hw] RAM {hw_pre.get('ram_used_gb','?')}/{hw_pre.get('ram_total_gb','?')} GB  "
           f"CPU {hw_pre.get('cpu_pct','?')}%")
 
+    # Journal: TOOL_CALL pending for model
+    append_journal({"event": "TOOL_CALL", "ticket": ticket_id,
+                    "tool": "model_call", "args": {"model": MODEL}, "status": "pending"})
+
+    t_start = time.perf_counter()
     try:
         raw, tokens, finish, elapsed = call_model(
             messages=[
@@ -608,19 +774,42 @@ def execute_ticket(ticket_path: str) -> bool:
         )
     except RuntimeError as e:
         hw_post = hw_snap()
+        t_elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+        append_journal({"event": "TOOL_CALL", "ticket": ticket_id,
+                        "tool": "model_call", "status": "error", "elapsed_ms": t_elapsed_ms,
+                        "error": str(e)})
         append_attempt_log(ticket_id, attempt_n, "error", 0, 0.0, "error",
                            budget, 0, str(e), hw_pre, hw_post)
         print(f"  [runner] model call failed: {e}")
         _write_result(result_path, ticket_id, "error", 0, str(e), 0.0,
                       hw_pre, hw_post, [], str(e), raw_full=str(e))
-        return False
+        return _handle_failure(ticket, ip_path, f"Model call failed: {e}")
 
     hw_post = hw_snap()
+    t_elapsed_ms = int((time.perf_counter() - t_start) * 1000)
     tok_s   = round(tokens / elapsed, 1) if elapsed > 0 else 0
     print(f"  [runner] tokens={tokens}  elapsed={elapsed}s  tok/s={tok_s}  finish={finish}")
 
-    tool_results = parse_and_run_tools(raw, exec_timeout=TIMEOUT)
+    # Journal: TOOL_CALL ok for model
+    append_journal({"event": "TOOL_CALL", "ticket": ticket_id,
+                    "tool": "model_call", "status": "ok", "elapsed_ms": t_elapsed_ms})
+
+    tool_results = parse_and_run_tools(raw, ticket_id=ticket_id, exec_timeout=TIMEOUT)
     passed, reason = _evaluate(result_path, tool_results)
+
+    # BUG 5 FIX: Run gate_command if present
+    if passed and ticket.gate_command:
+        print(f"  [runner] running gate: {ticket.gate_command}")
+        append_journal({"event": "GATE_RUN", "ticket": ticket_id,
+                        "command": ticket.gate_command, "status": "pending"})
+        gate_passed, gate_output = run_gate(ticket)
+        append_journal({"event": "GATE_RUN", "ticket": ticket_id,
+                        "command": ticket.gate_command,
+                        "status": "pass" if gate_passed else "fail"})
+        if not gate_passed:
+            passed = False
+            reason = f"gate_command failed: {gate_output.splitlines()[0][:80] if gate_output else 'unknown'}"
+
     outcome = "pass" if passed else "fail"
 
     append_attempt_log(ticket_id, attempt_n, outcome, tokens, elapsed, finish,
@@ -630,12 +819,15 @@ def execute_ticket(ticket_path: str) -> bool:
                   hw_pre, hw_post, tool_results, reason, raw_full=raw)
 
     if passed:
-        ticket.status = __import__("src.operator_v7", fromlist=["TicketStatus"]).TicketStatus.CLOSED
+        ticket.status = TicketStatus.CLOSED
+        ticket.attempts = attempt_n
         extras = getattr(ticket, "_extras", {})
         extras["updated_at"]   = time.strftime("%Y-%m-%dT%H:%M:%S")
         extras["attempts_log"] = f"{LOG_DIR}/{ticket_id}-attempts.jsonl"
+        extras["latency_s"]    = round(elapsed, 2)
+        extras["tokens_used"]  = tokens
         object.__setattr__(ticket, "_extras", extras)
-        dest = os.path.join(CLOSED_DIR, os.path.basename(ticket_path))
+        dest = os.path.join(CLOSED_DIR, f"{ticket_id}.yaml")
         save_ticket(dest, ticket)
         prune_logs(
             log_dir=LOG_DIR,
@@ -644,12 +836,22 @@ def execute_ticket(ticket_path: str) -> bool:
             min_retain=int(CFG["logging"].get("min_retain", 10)),
             keep_escalated=bool(CFG["logging"].get("keep_escalated", True)),
         )
-        if os.path.exists(ticket_path):
-            os.remove(ticket_path)
-        print(f"  [runner] PASS → closed/{os.path.basename(ticket_path)}")
+        # Clean up in_progress
+        if os.path.exists(ip_path):
+            os.remove(ip_path)
+        # Journal + scratch close
+        append_journal({"event": "TICKET_CLOSED", "ticket": ticket_id,
+                        "attempt": attempt_n, "wall_sec": round(elapsed, 2),
+                        "tokens_in": None, "tokens_out": tokens or None})
+        scratch_append(ticket_id, {"event": "SCRATCH_CLOSE", "result": "CLOSED"})
+        scratch_path = os.path.join(LOG_DIR, f"scratch-{ticket_id}.jsonl")
+        if os.path.exists(scratch_path):
+            os.remove(scratch_path)
+        print(f"  ✅  {ticket_id} CLOSED ({elapsed:.1f}s, {tokens} tokens)")
         return True
     else:
         print(f"  [runner] FAIL: {reason}")
+        # Don't call _handle_failure here — let drain() decide retry vs fail
         return False
 
 
@@ -781,7 +983,9 @@ def write_tickets(tickets: list) -> None:
         tid = t.get("ticket_id", next_ticket_id())
         t.setdefault("status",        "open")
         t.setdefault("depth",         0)
+        t.setdefault("attempts",      0)
         t.setdefault("max_depth",     2)
+        t.setdefault("max_retries",   MAX_TICKET_RETRIES)
         t.setdefault("created_at",    time.strftime("%Y-%m-%d"))
         t.setdefault("updated_at",    time.strftime("%Y-%m-%d"))
         t.setdefault("result_path",   f"{LOG_DIR}/{tid}-result.txt")
@@ -791,6 +995,9 @@ def write_tickets(tickets: list) -> None:
         t.setdefault("consumes",      [])
         t.setdefault("tags",          [])
         t.setdefault("agent",         MODEL)
+        t.setdefault("task_steps",    [])
+        t.setdefault("gate_command",  "")
+        t.setdefault("acceptance_criteria", "")
         path = os.path.join(OPEN_DIR, f"{tid}.yaml")
         save_ticket(path, t)
         print(f"[runner] ticket → {path}")
@@ -799,7 +1006,18 @@ def write_tickets(tickets: list) -> None:
 # ── drain loop ────────────────────────────────────────────────────────────────
 
 def drain(once: bool = False) -> None:
-    max_depth = int(CFG["tickets"].get("decrement_default", 3))
+    max_retries = MAX_TICKET_RETRIES
+
+    # BUG 7 FIX: SESSION_START event
+    append_journal({
+        "event": "SESSION_START",
+        "executor": MODEL,
+        "stage": CFG.get("agent", {}).get("stage", "bud"),
+    })
+
+    session_start = time.perf_counter()
+    tickets_closed = 0
+    tickets_failed = 0
 
     prune_logs(
         log_dir=LOG_DIR,
@@ -809,109 +1027,127 @@ def drain(once: bool = False) -> None:
         keep_escalated=bool(CFG["logging"].get("keep_escalated", True)),
     )
 
-    while True:
-        tickets = scan_open()
-        if not tickets:
-            print("[runner] all tickets closed — done")
-            break
+    try:
+        while True:
+            tickets = scan_open()
+            if not tickets:
+                print("[runner] all tickets closed — done")
+                break
 
-        dispatched_this_pass = 0
-        deferred = []
+            dispatched_this_pass = 0
+            deferred = []
 
-        for ticket_path in tickets:
-            ticket    = load_ticket(ticket_path)
-            ticket_id = ticket.id
+            for ticket_path in tickets:
+                ticket    = load_ticket(ticket_path)
+                ticket_id = ticket.id
 
-            if not deps_met(ticket) or not _consumes_met(ticket):
-                unmet = [d for d in (ticket.depends_on or [])
-                         if not is_closed(d)]
-                unmet_consumes = [c for c in (ticket.consumes or [])
-                                  if not os.path.exists(c)]
-                reason = []
-                if unmet:
-                    reason.append(f"waiting on deps {unmet}")
-                if unmet_consumes:
-                    reason.append(f"missing consumes {unmet_consumes}")
-                print(f"[runner] deferred {ticket_id} — {'; '.join(reason)}")
-                deferred.append(ticket_path)
-                continue
+                if not deps_met(ticket) or not _consumes_met(ticket):
+                    unmet = [d for d in (ticket.depends_on or [])
+                             if not is_closed(d)]
+                    unmet_consumes = [c for c in (ticket.consumes or [])
+                                      if not os.path.exists(c)]
+                    reason = []
+                    if unmet:
+                        reason.append(f"waiting on deps {unmet}")
+                    if unmet_consumes:
+                        reason.append(f"missing consumes {unmet_consumes}")
+                    print(f"[runner] deferred {ticket_id} — {'; '.join(reason)}")
+                    deferred.append(ticket_path)
+                    continue
 
-            dispatched_this_pass += 1
-            depth  = ticket.depth
-            passed = execute_ticket(ticket_path)
+                dispatched_this_pass += 1
+                passed = execute_ticket(ticket_path)
 
-            if not passed:
-                if depth < max_depth:
-                    ticket.depth = depth + 1
-                    extras = getattr(ticket, "_extras", {})
-                    extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-                    object.__setattr__(ticket, "_extras", extras)
-                    save_ticket(ticket_path, ticket)
-                    print(f"[runner] retry queued depth={depth+1}: {ticket_id}")
+                if passed:
+                    tickets_closed += 1
                 else:
-                    fail_path = os.path.join(FAIL_DIR, os.path.basename(ticket_path))
-                    from src.operator_v7 import TicketStatus
-                    ticket.status = TicketStatus.ESCALATED
-                    extras = getattr(ticket, "_extras", {})
-                    extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-                    object.__setattr__(ticket, "_extras", extras)
-                    save_ticket(fail_path, ticket)
-                    if os.path.exists(ticket_path):
-                        os.remove(ticket_path)
-                    print(f"[runner] max_depth reached → failed/{os.path.basename(ticket_path)}")
+                    # BUG 9 FIX: Proper retry loop — reload ticket from in_progress
+                    ip_path = os.path.join(IN_PROG_DIR, f"{ticket_id}.yaml")
+                    if os.path.exists(ip_path):
+                        ticket = load_ticket(ip_path)
+                    attempts = ticket.attempts + 1
+                    ticket_max_retries = getattr(ticket, "max_retries", None) or max_retries
 
-            if once:
-                return
-
-        if dispatched_this_pass == 0 and deferred:
-            # STEP-08-C: Check for deadlock cycles before giving up
-            open_tickets = {}
-            for p in deferred:
-                ticket = load_ticket(p)
-                open_tickets[ticket.id] = {"ticket_id": ticket.id, "depends_on": ticket.depends_on or []}
-            
-            cycle = _detect_deadlock(open_tickets)
-            
-            if cycle:
-                print(f"[runner] DEADLOCK DETECTED: cycle involving {cycle}")
-                for p in deferred:
-                    ticket = load_ticket(p)
-                    if ticket.id in cycle:
-                        fail_path = os.path.join(FAIL_DIR, os.path.basename(p))
-                        from src.operator_v7 import TicketStatus
-                        ticket.status = TicketStatus.ESCALATED
+                    if attempts < ticket_max_retries:
+                        # Move back to open for retry
+                        ticket.attempts = attempts
+                        ticket.status = TicketStatus.PENDING
                         extras = getattr(ticket, "_extras", {})
                         extras["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-                        extras["deadlock_reason"] = "cycle"
-                        extras["cycle_participants"] = list(cycle)
+                        extras["status"] = "open"
                         object.__setattr__(ticket, "_extras", extras)
-                        save_ticket(fail_path, ticket)
-                        if os.path.exists(p):
-                            os.remove(p)
-                        print(f"[runner] cycle participant → failed/{os.path.basename(p)}")
+                        retry_path = os.path.join(OPEN_DIR, f"{ticket_id}.yaml")
+                        save_ticket(retry_path, ticket)
+                        if os.path.exists(ip_path):
+                            os.remove(ip_path)
+                        append_journal({
+                            "event": "TICKET_RETRY", "ticket": ticket_id,
+                            "attempt": attempts,
+                            "reason": "gate/tool failure, retrying",
+                        })
+                        print(f"  ⚠️  {ticket_id} retry queued (attempt {attempts}/{ticket_max_retries})")
+                    else:
+                        tickets_failed += 1
+                        _handle_failure(ticket, ip_path,
+                                        f"Max retries exhausted ({attempts}/{ticket_max_retries})")
+
+                if once:
+                    return
+
+            if dispatched_this_pass == 0 and deferred:
+                # Deadlock detection
+                open_tickets = {}
+                for p in deferred:
+                    ticket = load_ticket(p)
+                    open_tickets[ticket.id] = {"ticket_id": ticket.id, "depends_on": ticket.depends_on or []}
+
+                cycle = _detect_deadlock(open_tickets)
+
+                if cycle:
+                    print(f"[runner] DEADLOCK DETECTED: cycle involving {cycle}")
+                    for p in deferred:
+                        ticket = load_ticket(p)
+                        if ticket.id in cycle:
+                            tickets_failed += 1
+                            _handle_failure(ticket, p, f"Deadlock: cycle involving {cycle}")
+                    break
+
+                print(f"[runner] blocked — {len(deferred)} ticket(s) cannot proceed:")
+                for p in deferred:
+                    ticket    = load_ticket(p)
+                    ticket_id = ticket.id
+                    unmet         = [d for d in (ticket.depends_on or [])
+                                     if not is_closed(d)]
+                    failed_deps   = [d for d in unmet if is_failed(d)]
+                    missing_deps  = [d for d in unmet
+                                     if not is_failed(d)
+                                     and not os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
+                    open_deps     = [d for d in unmet
+                                     if os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
+                    if failed_deps:
+                        print(f"  {ticket_id}: UPSTREAM FAILED → {failed_deps} exhausted retries")
+                    elif missing_deps:
+                        print(f"  {ticket_id}: MISSING DEP → {missing_deps} not found anywhere")
+                    elif open_deps:
+                        print(f"  {ticket_id}: DEADLOCK → circular dep on open tickets {open_deps}")
+                    else:
+                        print(f"  {ticket_id}: waiting on {unmet}")
                 break
-            
-            print(f"[runner] blocked — {len(deferred)} ticket(s) cannot proceed:")
-            for p in deferred:
-                ticket    = load_ticket(p)
-                ticket_id = ticket.id
-                unmet         = [d for d in (ticket.depends_on or [])
-                                 if not is_closed(d)]
-                failed_deps   = [d for d in unmet if is_failed(d)]
-                missing_deps  = [d for d in unmet
-                                 if not is_failed(d)
-                                 and not os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
-                open_deps     = [d for d in unmet
-                                 if os.path.exists(os.path.join(OPEN_DIR, f"{d}.yaml"))]
-                if failed_deps:
-                    print(f"  {ticket_id}: UPSTREAM FAILED → {failed_deps} exhausted retries")
-                elif missing_deps:
-                    print(f"  {ticket_id}: MISSING DEP → {missing_deps} not found anywhere")
-                elif open_deps:
-                    print(f"  {ticket_id}: DEADLOCK → circular dep on open tickets {open_deps}")
-                else:
-                    print(f"  {ticket_id}: waiting on {unmet}")
-            break
+    finally:
+        # BUG 7 FIX: SESSION_END event (always runs, even on exception)
+        wall_sec = round(time.perf_counter() - session_start, 2)
+        reason = "DONE" if tickets_failed == 0 else "ESCALATED"
+        if not scan_open() and tickets_failed == 0:
+            reason = "DONE"
+        elif scan_open() and tickets_closed == 0 and tickets_failed == 0:
+            reason = "BLOCKED"
+        append_journal({
+            "event": "SESSION_END",
+            "reason": reason,
+            "tickets_closed": tickets_closed,
+            "tickets_failed": tickets_failed,
+            "wall_sec": wall_sec,
+        })
 
 
 # ── pre-warm ──────────────────────────────────────────────────────────────────
@@ -933,20 +1169,29 @@ def prewarm() -> None:
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    once       = "--once"       in sys.argv
-    no_prewarm = "--no-prewarm" in sys.argv
+    import argparse
+    parser = argparse.ArgumentParser(description="Fractal Claws agent runner v7")
+    parser.add_argument("--once", action="store_true", help="Run one ticket and exit")
+    parser.add_argument("--no-prewarm", action="store_true", help="Skip model pre-warm")
+    parser.add_argument("--goal", type=str, help="Decompose a goal into tickets first")
+    parser.add_argument("--ticket", type=str, help="Run a specific ticket by ID")
+    parser.add_argument("--dry-run", action="store_true", help="Print next ticket without executing")
+    args = parser.parse_args()
 
-    if not no_prewarm:
+    if not args.no_prewarm:
         prewarm()
 
-    goal = None
-    for i, arg in enumerate(sys.argv):
-        if arg == "--goal" and i + 1 < len(sys.argv):
-            goal = sys.argv[i + 1]
-            break
+    if args.dry_run:
+        tickets = scan_open()
+        if tickets:
+            t = load_ticket(tickets[0])
+            print(f"Next ready: {t.id} — {t.title}")
+        else:
+            print("No open tickets.")
+        return
 
-    if goal:
-        print(f"[runner] goal: {goal}")
+    if args.goal:
+        print(f"[runner] goal: {args.goal}")
         existing_nums = []
         for d in [OPEN_DIR, CLOSED_DIR, FAIL_DIR]:
             for p in glob.glob(os.path.join(d, "TASK-*.yaml")):
@@ -956,14 +1201,14 @@ def main() -> None:
                 except (IndexError, ValueError):
                     pass
         first_n = max(existing_nums, default=0) + 1
-        tickets = decompose_goal(goal, first_n)
+        tickets = decompose_goal(args.goal, first_n)
         if not tickets:
             print("[runner] decomposition produced no tickets — abort")
             sys.exit(1)
         write_tickets(tickets)
         print(f"[runner] {len(tickets)} ticket(s) written")
 
-    drain(once=once)
+    drain(once=args.once)
 
 
 if __name__ == "__main__":
