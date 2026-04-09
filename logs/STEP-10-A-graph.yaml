@@ -1,13 +1,13 @@
 ticket:   STEP-10-A
 finish:   stop
-tokens:   2935
-elapsed:  9.96s
+tokens:   3293
+elapsed:  13.15s
 reason:   ok
 
 === hardware ===
-pre:  RAM 103.26/127.28 GB  CPU 3.6%
-post: RAM 103.33/127.28 GB  CPU 4.5%
-tok/s: 294.7
+pre:  RAM 111.62/127.28 GB  CPU 23.0%
+post: RAM 106.95/127.28 GB  CPU 4.5%
+tok/s: 250.4
 
 === tool results ===
 [read_file] agent/context_budget.py
