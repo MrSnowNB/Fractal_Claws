@@ -1,0 +1,72 @@
+ticket_id: STEP-10-D
+title: "STEP-10 gate: pytest green + journal anchor + cache artifact"
+status: open
+priority: high
+depth: 1
+parent: STEP-10
+depends_on:
+  - STEP-10-B
+  - STEP-10-C
+agent: luffy-v1
+
+task: |
+  Gate only — no code changes. Write scratch first.
+
+  Run the full test suite:
+    pytest tests/ -v
+
+  Assert:
+    1. 0 failures (pre-existing skips are acceptable)
+    2. tests/test_step10_graphify.py shows 4 passed
+
+  Inspect logs/luffy-journal.jsonl:
+    - Read the last 5 lines
+    - Confirm at least one line contains event=GRAPHIFY_COMPLETE
+    - Confirm that entry has keys: files, tokens_estimated, zone_summary
+
+  Inspect logs/ctx-cache.json:
+    - Confirm file exists
+    - Confirm JSON is valid
+    - Confirm top-level key "hashes" is present and non-empty
+
+  If any assertion fails, stop and write an ISSUE entry to the journal.
+  Do NOT attempt to fix failures in this ticket — open a new sub-ticket.
+
+  When all assertions pass:
+    - Append journal entry: event=STEP-10-COMPLETE, tests_passed=<count>, files_scanned=<N>
+    - Git commit with message: "STEP-10: graphify pre-scan complete — gate passed"
+
+rationale: |
+  Discrete gate ticket ensures all STEP-10 sub-work is validated atomically
+  before moving to STEP-11. Journal anchor provides a durable checkpoint
+  that can be inspected in future sessions.
+
+produces:
+  - logs/luffy-journal.jsonl
+
+consumes:
+  - tests/test_step10_graphify.py
+  - agent/context_budget.py
+  - agent/runner.py
+  - logs/luffy-journal.jsonl
+  - logs/ctx-cache.json
+
+allowed_tools:
+  - read_file
+  - exec_python
+
+acceptance_criteria: |
+  - pytest tests/ -v: 0 failures
+  - test_step10_graphify.py: 4 passed
+  - logs/luffy-journal.jsonl contains event=GRAPHIFY_COMPLETE entry
+  - logs/ctx-cache.json exists with non-empty hashes key
+  - Journal entry event=STEP-10-COMPLETE written
+  - Git commit pushed
+
+task_steps:
+  - Write scratch: list all assertions to verify
+  - Run pytest tests/ -v via exec_python
+  - Read last 5 lines of logs/luffy-journal.jsonl
+  - Read logs/ctx-cache.json and validate structure
+  - If all pass: append journal entry and commit
+  - If any fail: append ISSUE entry, stop

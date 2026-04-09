@@ -1,0 +1,60 @@
+ticket_id: STEP-10-B
+title: "Wire graphify_repo() into runner.py SESSION_START"
+status: open
+priority: high
+depth: 1
+parent: STEP-10
+depends_on:
+  - STEP-10-A
+agent: luffy-v1
+
+task: |
+  Read agent/runner.py. Write scratch first.
+
+  Find the SESSION_START block (where budget.reset_session() is called).
+  Immediately after budget.reset_session(), add:
+
+    graphify_result = budget.graphify_repo(root=".")
+
+  Then append a journal entry using append_journal() (from scripts/log_journal.py):
+
+    append_journal({
+        "event": "GRAPHIFY_COMPLETE",
+        "files": graphify_result["files_scanned"],
+        "tokens_estimated": graphify_result["tokens_estimated"],
+        "zone_summary": graphify_result["zone_summary"],
+    })
+
+  RULES:
+  - Do not move or restructure the SESSION_START block.
+  - Do not touch any other method or section of runner.py.
+  - graphify_repo() call must come AFTER reset_session() and BEFORE any ticket is loaded.
+  - Journal entry must use the exact keys: event, files, tokens_estimated, zone_summary.
+
+rationale: |
+  graphify_repo() must run at session start so should_read() returns (False, "cached")
+  for all unchanged files from the very first ticket. Without this wiring the pre-scan
+  never executes and Luffy continues re-reading specs each session.
+
+produces:
+  - agent/runner.py
+
+consumes:
+  - agent/runner.py
+  - agent/context_budget.py
+  - scripts/log_journal.py
+
+allowed_tools:
+  - read_file
+  - write_file
+
+acceptance_criteria: |
+  - budget.graphify_repo(root=".") called after reset_session() in SESSION_START
+  - append_journal() called with event=GRAPHIFY_COMPLETE and correct keys
+  - No other changes to runner.py
+
+task_steps:
+  - Write scratch: locate SESSION_START block, plan insertion point
+  - Read agent/runner.py fully
+  - Insert graphify_repo() call and journal entry
+  - Write file
