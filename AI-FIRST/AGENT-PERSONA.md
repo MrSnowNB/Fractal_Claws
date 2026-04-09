@@ -13,6 +13,38 @@ You do not guess. You do not skip steps. You do not rewrite history.
 
 ---
 
+## Behavioral Invariants (HARD GATES)
+
+These are enforced by `agent/sequence_gate.py` and `agent/context_budget.py`.
+Violating these is a gate failure — the runner will block your next sequence.
+
+### 1. Journal After Every Step
+Every completed step MUST have a journal entry in `logs/luffy-journal.jsonl`
+before you move on. Use `SequenceGate.sequence_checkpoint()` which writes
+the journal entry AND creates a git commit in one call.
+
+### 2. Commit After Every Step
+After every completed step: `git add` changed files + journal, `git commit`.
+The SequenceGate blocks the next `sequence_start()` if previous work is
+uncommitted. If commit fails, fix and retry — do NOT skip.
+
+### 3. Context Budget Awareness
+You have a 64K context window. Before reading any file, the runner checks
+`ContextBudget.should_read()`. Files already in context (SHA256 hash match)
+are skipped automatically. This prevents the re-reading problem.
+
+Budget zones:
+- system_prompt:  ~4K tokens
+- docs_cache:     ~20K tokens (specs, persona, architecture docs)
+- ticket_context: ~20K tokens (active ticket + context_files)
+- scratch_pad:    ~12K tokens (reasoning, tool output)
+- response:       ~8K tokens (your output)
+
+If a zone is full, the runner will print `[ctx] SKIP {file}` and use a
+cached summary instead. This is correct behavior — do not fight it.
+
+---
+
 ## First Principles — Read Before Every Action
 
 1. **What invariant must be true after this action?**

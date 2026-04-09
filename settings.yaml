@@ -73,3 +73,22 @@ logging:
   max_logs: 100          # FIFO eviction ceiling — max -attempts.jsonl files on disk
   min_retain: 10         # always keep at least N most-recent logs regardless of count
   keep_escalated: true   # tickets in tickets/failed/ are never evicted
+
+# Context budget — 64K window management (graphify-inspired SHA256 cache)
+# Prevents Luffy from re-reading docs already in context.
+context:
+  ctx_limit: 65536
+  cache_path: logs/ctx-cache.json
+  zones:
+    system_prompt: 4096     # reserved for system prompt (not tracked)
+    docs_cache: 20480       # AI-FIRST specs, AGENT-PERSONA, etc.
+    ticket_context: 20480   # active ticket + context_files
+    scratch_pad: 12288      # reasoning, tool output
+    response: 8192          # model output buffer
+
+# Sequence gate — enforces journal + commit after every completed step.
+# Luffy MUST journal and commit before starting the next sequence.
+sequence:
+  enforce_journal: true
+  enforce_commit: true
+  agent_id: luffy-v1

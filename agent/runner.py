@@ -49,6 +49,8 @@ from src.operator_v7 import Ticket, TicketStatus
 from src.skill_store import match_goal_class, load_skill, write_skill, SkillLoadError, SkillWriteError
 
 from agent.log_manager import prune_logs
+from agent.context_budget import ContextBudget
+from agent.sequence_gate import SequenceGate
 
 
 # ── config ────────────────────────────────────────────────────────────────────
@@ -88,6 +90,23 @@ client = OpenAI(base_url=ENDPOINT, api_key=API_KEY)
 
 # Session UUID — generated once per runner invocation
 SESSION_UUID = str(uuid.uuid4())
+
+# Context budget manager (graphify-inspired SHA256 cache, 64K window)
+_ctx_cfg = CFG.get("context", {})
+CTX_BUDGET = ContextBudget(
+    ctx_limit=int(_ctx_cfg.get("ctx_limit", 65536)),
+    cache_path=_ctx_cfg.get("cache_path", "logs/ctx-cache.json"),
+    zones=_ctx_cfg.get("zones"),
+)
+
+# Sequence gate (journal + commit enforcement)
+_seq_cfg = CFG.get("sequence", {})
+SEQ_GATE = SequenceGate(
+    journal_path=JOURNAL_PATH,
+    agent_id=_seq_cfg.get("agent_id", "luffy-v1"),
+    enforce_journal=bool(_seq_cfg.get("enforce_journal", True)),
+    enforce_commit=bool(_seq_cfg.get("enforce_commit", True)),
+)
 
 
 # ── journal helpers (BUG 7 FIX: session lifecycle events) ─────────────────────
@@ -599,8 +618,16 @@ def build_prompt(ticket: Ticket, upstream_context: str) -> str:
     prompt  = TOOL_SYNTAX
     prompt += f"\nTask: {ticket.task}"
     for cf in (ticket.context_files or []):
-        content = tool_read_file(cf)
-        prompt += f"\n\n--- {cf} ---\n{content}"
+        # Context budget check: skip files already in context (graphify cache pattern)
+        should, reason = CTX_BUDGET.should_read(cf, zone="ticket_context")
+        if should:
+            content = tool_read_file(cf)
+            CTX_BUDGET.mark_read(cf, zone="ticket_context")
+            prompt += f"\n\n--- {cf} ---\n{content}"
+        else:
+            summary = CTX_BUDGET.get_read_summary(cf) or f"[{reason}]"
+            print(f"  [ctx] SKIP {cf} — {summary}")
+            prompt += f"\n\n--- {cf} {summary} ---"
     if upstream_context.strip():
         prompt += f"\n\n--- upstream results ---\n{upstream_context}"
     return prompt
@@ -1008,6 +1035,9 @@ def write_tickets(tickets: list) -> None:
 def drain(once: bool = False) -> None:
     max_retries = MAX_TICKET_RETRIES
 
+    # Reset context budget for new session
+    CTX_BUDGET.reset_session()
+
     # BUG 7 FIX: SESSION_START event
     append_journal({
         "event": "SESSION_START",
@@ -1147,6 +1177,8 @@ def drain(once: bool = False) -> None:
             "tickets_closed": tickets_closed,
             "tickets_failed": tickets_failed,
             "wall_sec": wall_sec,
+            "context_budget": CTX_BUDGET.budget_report(),
+            "sequence_completed": SEQ_GATE.completed,
         })
 
 

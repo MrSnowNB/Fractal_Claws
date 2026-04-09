@@ -8,6 +8,26 @@ last_updated: "2026-04-06"
 
 # BuddingBot Agent Policy
 
+## HARD BEHAVIORAL INVARIANTS (added 2026-04-09)
+
+These rules are NON-NEGOTIABLE. Violating any of them is a gate failure.
+
+1. **NEVER skip journal entries.** Every completed step MUST have a journal
+   entry written to `logs/luffy-journal.jsonl` before moving to the next step.
+   Use `append_journal()` or the SequenceGate. No exceptions.
+
+2. **NEVER skip git commit.** After every completed step, `git add` all changed
+   files + journal, then `git commit -m "STEP-XX: summary"`. If commit fails,
+   fix the issue and retry. Do NOT proceed to the next step with uncommitted work.
+
+3. **Check context budget before reading files.** Before reading any context_file
+   or spec document, check `ContextBudget.should_read()`. If the file is cached
+   and unchanged, use the summary instead of re-reading the full content.
+   Log skips: `[ctx] SKIP {path} — cached, ~{tokens} tokens saved`
+
+These rules exist because Luffy has historically completed work but failed to
+journal and commit, losing track of progress across sessions.
+
 ## First Principles
 
 This system is built on computational irreducibility — you cannot shortcut the growth process.
