@@ -1,0 +1,230 @@
+ticket:   STEP-10-A
+finish:   stop
+tokens:   2935
+elapsed:  9.96s
+reason:   ok
+
+=== hardware ===
+pre:  RAM 103.26/127.28 GB  CPU 3.6%
+post: RAM 103.33/127.28 GB  CPU 4.5%
+tok/s: 294.7
+
+=== tool results ===
+[read_file] agent/context_budget.py
+#!/usr/bin/env python3
+"""
+context_budget.py — 64K context window budget manager for Luffy
+
+Problem: Luffy re-reads docs every sequence, burning context tokens.
+Solution: SHA256 content-addressed cache + token budget tracking.
+
+Ported from graphify's cache.py pattern (SHA256 content-addressed file cache)
+and adapted for context window management on ZBook Strix Halo.
+
+Usage:
+    budget = ContextBudget(ctx_limit=65536)
+    should, reason = budget.should_read("AI-FIRST/STEP-08-LINT-CHAIN.md")
+    if should:
+        content = Path(path).read_text()
+        budget.mark_read(path)
+    else:
+        summary = budget.get_read_summary(path)
+        # Use summary instead of full content
+"""
+
+import hashlib
+import json
+import time
+from pathlib import Path
+from typing import Optional
+
+# Default 64K context for Qwen3.5-35B-A3B
+DEFAULT_CTX_LIMIT = 65536
+
+# Approximate tokens-per-char ratio for code/markdown
+CHARS_PER_TOKEN = 3.5
+
+# Budget zones — how the 64K window is allocated
+DEFAULT_ZONES = {
+    "system_prompt":  4096,
+    "docs_cache":     20480,
+    "ticket_context": 20480,
+    "scratch_pad":    12288,
+    "response":       8192,
+}
+
+
+class ContextBudget:
+    """Tracks what Luffy has already read this session.
+
+    Core idea from graphify: SHA256 hash each file's content.
+    If hash hasn't changed since last read, skip it — the knowledge
+    is already in context from a prior turn.
+
+    Budget zones (for 64K ctx):
+        system_prompt:  ~4K tokens (reserved, not tracked here)
+        docs_cache:     ~20K tokens (AI-FIRST specs, AGENT-PERSONA, etc.)
+        ticket_context: ~20K tokens (active ticket + context_files)
+        scratch_pad:    ~12K tokens (reasoning, tool output)
+        response:       ~8K tokens (model output buffer)
+    """
+
+    def __init__(
+        self,
+        ctx_limit: int = DEFAULT_CTX_LIMIT,
+        cache_path: str = "logs/ctx-cache.json",
+        zones: Optional[dict] = None,
+    ):
+        self.ctx_limit = ctx_limit
+        self.cache_path = Path(cache_path)
+        self.zones = dict(zones or DEFAULT_ZONES)
+        self._file_hashes: dict[str, str] = {}   # path -> sha256
+        self._file_tokens: dict[str, int] = {}   # path -> approx token count
+        self._zone_usage: dict[str, int] = {z: 0 for z in self.zones}
+        self._session_reads: set[str] = set()     # files read this session
+        self._load_cache()
+
+    # ── persistence ───────────────────────────────────────────────────────
+
+    def _load_cache(self) -> None:
+        """Load persistent file hash cache from disk."""
+        if self.cache_path.exists():
+            try:
+                data = json.loads(self.cache_path.read_text())
+                self._file_hashes = data.get("hashes", {})
+                self._file_tokens = data.get("tokens", {})
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    def _save_cache(self) -> None:
+        """Persist file hash cache to disk."""
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "hashes": self._file_hashes,
+            "tokens": self._file_tokens,
+            "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        tmp = self.cache_path.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps(data, indent=2))
+            tmp.replace(self.cache_path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+
+    # ── hashing (graphify pattern) ────────────────────────────────────────
+
+    @staticmethod
+    def file_hash(path: str) -> str:
+        """SHA256 of file content (same pattern as graphify.cache.file_hash)."""
+        h = hashlib.sha256()
+        h.update(Path(path).read_bytes())
+        return h.hexdigest()
+
+    @staticmethod
+    def estimate_tokens(text: str) -> int:
+        """Approximate token count from character length."""
+        return max(1, int(len(text) / CHARS_PER_TOKEN))
+
+    # ── read gating ──────────────────────────────────────────────────────
+
+    def should_read(self, path: str, zone: str = "docs_cache") -> tuple[bool, str]:
+        """Check if a file needs to be read or is already in context.
+
+        Returns:
+            (should_read, reason)
+            - (True, "new")              — never seen
+            - (True, "changed")          — content changed since last read
+            - (False, "cached")          — already in context, unchanged
+            - (False, "budget_exceeded") — reading would blow the zone budget
+            - (False, "missing")         — file does not exist
+        """
+        resolved = str(Path(path).resolve())
+
+        if not Path(path).exists():
+            return (False, "missing")
+
+        current_hash = self.file_hash(path)
+
+        # Already read this session AND content unchanged
+        if resolved in self._session_reads and self._file_hashes.get(resolved) == current_hash:
+            return (False, "cached")
+
+        # Estimate tokens
+        try:
+            content = Path(path).read_text(errors="replace")
+        except OSError:
+            return (False, "missing")
+        tokens_needed = self.estimate_tokens(content)
+
+        # Check zone budget
+        zone_budget = self.zones.get(zone, 20480)
+        if self._zone_usage.get(zone, 0) + tokens_needed > zone_budget:
+            return (False, "budget_exceeded")
+
+        if resolved in self._file_hashes:
+            return (True, "changed")
+        return (True, "new")
+
+    def mark_read(self, path: str, zone: str = "docs_cache") -> int:
+        """Mark a file as read, update hash and budget tracking.
+
+        Returns approximate token count consumed.
+        """
+        resolved = str(Path(path).resolve())
+        current_hash = self.file_hash(path)
+        content = Path(path).read_text(errors="replace")
+        tokens = self.estimate_tokens(content)
+
+        self._file_hashes[resolved] = current_hash
+        self._file_tokens[resolved] = tokens
+        self._session_reads.add(resolved)
+        self._zone_usage[zone] = self._zone_usage.get(zone, 0) + tokens
+        self._save_cache()
+
+        return tokens
+
+    # ── reporting ─────────────────────────────────────────────────────────
+
+    def budget_report(self) -> dict:
+        """Return current budget allocation status."""
+        report = {}
+        for zone, limit in self.zones.items():
+            used = self._zone_usage.get(zone, 0)
+            report[zone] = {
+                "used": used,
+                "limit": limit,
+                "remaining": limit - used,
+                "pct": round(used / limit * 100, 1) if limit > 0 else 0,
+            }
+        total_used = sum(self._zone_usage.values())
+        report["total"] = {
+            "used": total_used,
+            "limit": self.ctx_limit,
+            "remaining": self.ctx_limit - total_used,
+            "pct": round(total_used / self.ctx_limit * 100, 1),
+        }
+        return report
+
+    def get_read_summary(self, path: str) -> Optional[str]:
+        """If a file is cached, return a one-line summary instead of full content.
+
+        This is the key optimization: instead of re-reading a 500-line spec,
+        Luffy gets: "AI-FIRST/STEP-08-LINT-CHAIN.md [cached, ~1842 tokens, unchanged]"
+        """
+        resolved = str(Path(path).resolve())
+        if resolved in self._session_reads and resolved in self._file_hashes:
+            tokens = self._file_tokens.get(resolved, 0)
+            return f"[cached, ~{tokens} tokens, hash={self._file_hashes[resolved][:8]}]"
+        return None
+
+    def reset_session(self) -> None:
+        """Reset per-session tracking (call at SESSION_START)."""
+        self._session_reads.clear()
+        self._zone_usage = {z: 0 for z in self.zones}
+
+
+=== raw model response (complete) ===
+TOOL: read_file
+PATH: agent/context_budget.py
+END

@@ -1,0 +1,47 @@
+ticket_id: STEP-10-A
+title: ''
+depth: 0
+parent: null
+children: []
+status: in_progress
+attempts: 0
+decrement: 3
+priority: medium
+result: null
+created_at: '2026-04-09T18:44:00'
+task: 'Integrate graphify_repo() into ContextBudget class. The child should read agent/context_budget.py
+  and add a method that builds a knowledge graph over cached/read files. The method
+  should accept a list of file paths, compute their hashes and content summaries,
+  and output a graph structure where nodes are files and edges represent read relationships.
+  Output should be written to logs/STEP-10-A-graph.yaml.
+
+  '
+max_tokens: null
+depends_on: []
+context_files:
+- agent/context_budget.py
+- tools/toolbox.yaml
+result_path: logs/STEP-10-A-graph.yaml
+rationale: ''
+produces: []
+consumes: []
+tags: []
+agent: ''
+graph_scope: null
+return_to: null
+task_steps: []
+gate_command: ''
+acceptance_criteria: ''
+max_retries: null
+allowed_tools:
+- read_file
+- write_file
+- exec_python
+- list_dir
+version: '1.1'
+updated_at: '2026-04-09T18:45:25'
+timeout_seconds: 120
+attempts_log: logs/STEP-10-A-attempts.jsonl
+max_depth: 2
+latency_s: 9.96
+tokens_used: 2935
