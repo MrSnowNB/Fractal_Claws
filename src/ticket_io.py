@@ -495,3 +495,27 @@ def graphify_repo(repo_path: str = "tickets/closed") -> dict:
     graph["edges"] = unique_edges
 
     return graph
+
+
+def save_graph(graph: dict, filepath: str) -> None:
+    """Save a graph dictionary to a YAML file."""
+    os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", exist_ok=True)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        yaml.dump(graph, f, default_flow_style=False, sort_keys=False)
+
+
+def graphify_and_save(repo_path: str = "tickets/closed", output_path: str = "logs/STEP-10-B-graph.yaml") -> dict:
+    """Build a graph from tickets and save it to a YAML file.
+
+    Args:
+        repo_path: Directory containing ticket YAML files (default: "tickets/closed")
+        output_path: Path to save the graph YAML file (default: "logs/STEP-10-B-graph.yaml")
+
+    Returns:
+        The saved graph dict
+    """
+    graph = graphify_repo(repo_path)
+    save_graph(graph, output_path)
+    logger.info("[ticket_io] Graph saved to %s with %d nodes and %d edges",
+                output_path, len(graph["nodes"]), len(graph["edges"]))
+    return graph
