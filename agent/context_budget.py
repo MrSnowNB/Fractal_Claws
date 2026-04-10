@@ -212,12 +212,13 @@ class ContextBudget:
 
     # ── zone detection ──────────────────────────────────────────────────────
 
-    def _detect_zone(self, path: str) -> str:
+    def _detect_zone(self, path: str, repo_path: Optional[str] = None) -> str:
         """Detect the budget zone for a file based on path components.
 
         Rules match on individual path PARTS only — never substring of the
-        full path string — so pytest tmp_path directories (which may contain
-        words like 'ticket' or 'log' in temp dir names) do not pollute results.
+        full path string. When repo_path is provided, zone detection is based
+        on the relative path from repo_path to avoid false positives from
+        temporary directory names (e.g., pytest's temp-named tmp_path).
 
         Priority order:
           system_prompt  — any part is 'system' or 'persona'
@@ -225,14 +226,25 @@ class ContextBudget:
           scratch_pad    — any part is 'logs' or 'scratch' or 'temp'
           docs_cache     — everything else (AI-FIRST/, src/, agent/, etc.)
         """
-        parts_lower = [p.lower() for p in Path(path).parts]
+        path_obj = Path(path)
+        
+        # If repo_path provided, use relative path for zone detection
+        if repo_path:
+            try:
+                rel_path = path_obj.relative_to(repo_path)
+                parts_lower = [p.lower() for p in rel_path.parts]
+            except ValueError:
+                # Fallback to full path if relative_to fails
+                parts_lower = [p.lower() for p in path_obj.parts]
+        else:
+            parts_lower = [p.lower() for p in path_obj.parts]
 
         if any(p in ("system", "persona") for p in parts_lower):
             return "system_prompt"
         # Match the DIRECTORY named 'tickets' — not any path containing 'ticket'
         if "tickets" in parts_lower:
             return "ticket_context"
-        # logs/ scratch/ temp/ directories
+        # logs/ scratch/ temp/ directories — only from relative path
         if any(p in ("logs", "scratch", "temp") for p in parts_lower):
             return "scratch_pad"
         return "docs_cache"
@@ -294,7 +306,7 @@ class ContextBudget:
                 content = file_path.read_text(encoding="utf-8", errors="replace")
                 content_hash = self.file_hash(str(file_path))
                 tokens = self.estimate_tokens(content)
-                zone = self._detect_zone(str(file_path))
+                zone = self._detect_zone(str(file_path), repo_path=str(repo_dir.resolve()))
 
                 node = {
                     "id": file_path.stem,

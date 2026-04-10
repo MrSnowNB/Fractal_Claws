@@ -5,7 +5,7 @@ import tempfile
 import pytest
 from pathlib import Path
 
-from tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
+from src.tools.registry import ToolRegistry, ToolNotFoundError, ToolArgError
 from tools.terminal import run_command
 from src.operator_v7 import Ticket, TicketStatus, TicketPriority
 
