@@ -210,13 +210,28 @@ class ContextBudget:
         self._session_reads.clear()
         self._zone_usage = {z: 0 for z in self.zones}
 
+    # ── zone detection ──────────────────────────────────────────────────────
+
+    def _detect_zone(self, path: str) -> str:
+        """Detect the budget zone for a file based on path patterns."""
+        p = path.lower()
+        if "system" in p or "persona" in p:
+            return "system_prompt"
+        if "spec" in p or "policy" in p or "clinerules" in p:
+            return "docs_cache"
+        if "ticket" in p or "step" in p:
+            return "ticket_context"
+        if "scratch" in p or "temp" in p:
+            return "scratch_pad"
+        return "docs_cache"
+
     # ── graphify_repo() ───────────────────────────────────────────────────────
 
     def graphify_repo(self, repo_path: str = "tickets/closed") -> dict:
-        """Build a knowledge graph from tickets in a directory.
+        """Build a knowledge graph from files in a directory.
 
         Args:
-            repo_path: Directory containing ticket YAML files (default: tickets/closed)
+            repo_path: Directory containing files to scan (default: tickets/closed)
 
         Returns:
             Graph dict with nodes, edges, and metadata
@@ -229,43 +244,50 @@ class ContextBudget:
             "metadata": {
                 "source_dir": repo_path,
                 "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "ticket_count": 0,
+                "file_count": 0,
             },
         }
 
-        tickets_dir = Path(repo_path)
-        if not tickets_dir.exists():
+        repo_dir = Path(repo_path)
+        if not repo_dir.exists():
             graph["metadata"]["error"] = f"Directory not found: {repo_path}"
             return graph
 
-        ticket_files = list(tickets_dir.glob("*.yaml"))
-        graph["metadata"]["ticket_count"] = len(ticket_files)
+        # Scan all files (not just yaml)
+        all_files = [f for f in repo_dir.rglob("*") if f.is_file() and not f.name.startswith(".")]
+        graph["metadata"]["file_count"] = len(all_files)
 
-        for ticket_file in ticket_files:
+        for file_path in all_files:
             try:
-                content = ticket_file.read_text(encoding="utf-8")
+                content = file_path.read_text(encoding="utf-8")
                 # Basic YAML parsing without external deps
                 node = {
-                    "id": ticket_file.stem,
-                    "label": ticket_file.stem,
-                    "type": "ticket",
-                    "file": str(ticket_file),
-                    "content_hash": self.file_hash(str(ticket_file)),
+                    "id": file_path.stem,
+                    "label": file_path.name,
+                    "type": file_path.suffix.lstrip(".") or "unknown",
+                    "file": str(file_path),
+                    "content_hash": self.file_hash(str(file_path)),
                     "tokens": self.estimate_tokens(content),
+                    "zone": self._detect_zone(str(file_path)),
                 }
                 graph["nodes"].append(node)
 
+                # Populate cache for should_read() functionality
+                rel_path = str(file_path)
+                self._file_hashes[rel_path] = node["content_hash"]
+                self._session_reads.add(rel_path)
+
                 # Extract parent relationship if present (STEP-09 → STEP-10-A)
-                if ticket_file.stem.count("-") > 1:
-                    parent_id = "-".join(ticket_file.stem.split("-")[:-1])
+                if file_path.stem.count("-") > 1:
+                    parent_id = "-".join(file_path.stem.split("-")[:-1])
                     graph["edges"].append({
                         "from": parent_id,
-                        "to": ticket_file.stem,
+                        "to": file_path.stem,
                         "type": "depends_on",
                     })
             except Exception as e:
                 graph["metadata"].setdefault("errors", []).append(
-                    f"{ticket_file.stem}: {str(e)}"
+                    f"{file_path.name}: {str(e)}"
                 )
 
         # Deduplicate edges
