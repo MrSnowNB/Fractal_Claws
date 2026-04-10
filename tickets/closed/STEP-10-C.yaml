@@ -1,0 +1,80 @@
+ticket_id: STEP-10-C
+title: "Write tests/test_step10_graphify.py"
+status: closed
+priority: high
+depth: 1
+parent: STEP-10
+depends_on:
+  - STEP-10-A
+agent: luffy-v1
+
+task: |
+  Write scratch first. Then create tests/test_step10_graphify.py.
+
+  Use pytest and the tmp_path fixture only — NO real repo paths anywhere in the tests.
+
+  Implement exactly these four tests:
+
+  1. test_graphify_populates_cache:
+     - Create a tmp dir with 3 files: one .py, one .md, one .yaml
+     - Instantiate ContextBudget with cache_path inside tmp_path
+     - Call budget.graphify_repo(root=str(tmp_dir))
+     - Assert return dict has keys: files_scanned, tokens_estimated, zone_summary
+     - Assert files_scanned == 3
+     - Assert len(budget._file_hashes) == 3
+
+  2. test_graphify_cached_on_rescan:
+     - Create a tmp dir with 1 .md file
+     - Run graphify_repo() once
+     - Run graphify_repo() again (no changes)
+     - Call budget.should_read(str(the_file)) — assert result is (False, "cached")
+
+  3. test_graphify_changed_on_modify:
+     - Create a tmp dir with 1 .py file
+     - Run graphify_repo() once
+     - Modify the file content (append a line)
+     - Call budget.should_read(str(the_file)) — assert result[1] == "changed"
+
+  4. test_graphify_zone_assignment:
+     - Create a tmp dir with subdirs: AI-FIRST/, tickets/, logs/, src/
+     - Place one .md file in each subdir
+     - Run graphify_repo(root=str(tmp_dir))
+     - Assert zone_summary contains entries for docs_cache, ticket_context, scratch_pad
+     - Assert zone_summary["docs_cache"] >= 2  (AI-FIRST + src both map to docs_cache)
+     - Assert zone_summary["ticket_context"] == 1
+     - Assert zone_summary["scratch_pad"] == 1
+
+  RULES:
+  - Import ContextBudget from agent.context_budget
+  - All file paths via tmp_path — never hardcode repo paths
+  - No mocking — use real files in tmp_path
+  - Each test is fully independent (no shared state)
+
+rationale: |
+  graphify_repo() touches the filesystem broadly. Testing with tmp_path isolates
+  the logic from the real repo and makes the tests fast, deterministic, and safe
+  to run in CI without side effects on logs/ or ctx-cache.json.
+
+produces:
+  - tests/test_step10_graphify.py
+
+consumes:
+  - agent/context_budget.py
+
+allowed_tools:
+  - read_file
+  - write_file
+  - exec_python
+
+acceptance_criteria: |
+  - tests/test_step10_graphify.py exists
+  - Contains exactly 4 test functions named as specified
+  - All 4 tests use tmp_path fixture
+  - No real repo paths in any test
+  - pytest tests/test_step10_graphify.py -v passes with 4 passed, 0 failed
+
+task_steps:
+  - Write scratch: plan each test, note imports, note tmp_path usage
+  - Read agent/context_budget.py to confirm method signatures
+  - Write the test file
+  - Run exec_python to verify all 4 tests pass
