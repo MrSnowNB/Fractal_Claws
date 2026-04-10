@@ -36,8 +36,10 @@ Wire three code-level enforcement points into `agent/runner.py` so that:
    `AI-FIRST/NEXT-STEPS.md` scratchpad section) and `execute_ticket()` checks for it before
    proceeding past `SCRATCH_INIT`.
 3. **Law §3** — `build_prompt()` already calls `CTX_BUDGET.should_read()`. This step ensures
-   violations (reading a cached file anyway) are **logged as `LAW_VIOLATION` journal events**
-   with `law: 3` rather than silently skipped.
+   cache hits are **logged as `LAW3_CACHE_HIT` journal events** with `law: 3` — clearly named
+   to distinguish correct cache-conservation behavior from actual violations.
+   (Renamed from `LAW_VIOLATION` for §3 to avoid misleading semantics: a cache hit is correct
+   behavior, not an error.)
 
 ---
 
@@ -66,7 +68,7 @@ Wire three code-level enforcement points into `agent/runner.py` so that:
 | 1 | Add `assert_scratch_written(ticket_id)` to `SequenceGate` | `agent/sequence_gate.py` | unit |
 | 2 | Hook Law §1: call `SEQ_GATE.assert_scratch_written(ticket_id)` in `execute_ticket()` before writing `TICKET_CLOSED` | `agent/runner.py` | unit |
 | 3 | Hook Law §2: emit `SCRATCHPAD_READ` journal event in `drain()` session start block; check for it in `execute_ticket()` after `SCRATCH_INIT` | `agent/runner.py` | unit |
-| 4 | Hook Law §3: emit `LAW_VIOLATION` journal event when `CTX_BUDGET.should_read()` returns False but a read is attempted anyway (detect via `mark_read` on a cached path) | `agent/runner.py` | unit |
+| 4 | Hook Law §3: emit `LAW3_CACHE_HIT` journal event when `CTX_BUDGET.should_read()` returns False (cache hit = correct behavior; event name reflects this) | `agent/runner.py` | unit |
 | 5 | Write `tests/test_luffy_law.py` covering all three laws (6 tests minimum) | `tests/test_luffy_law.py` | unit |
 | 6 | Run full suite, write journal entry with anchor, commit, push | journal + git | full suite |
 
@@ -91,11 +93,52 @@ gates:
   docs:
     description: "NEXT-STEPS.md scratchpad section updated; STEP-11 marked in build queue"
     pass_condition: "STEP-11 row present in build queue with gate status"
+  step09_roundtrip:
+    description: "STEP-09 fix included in full suite — graph_scope/return_to round-trip"
+    command: "pytest tests/test_ticket_io.py -v -k 'graph_scope or return_to'"
+    pass_condition: "4 passed, 0 failed"
 ```
 
 ---
 
 ## Implementation Notes
+
+### Law §3 Event Name — `LAW3_CACHE_HIT` (not `LAW_VIOLATION`)
+
+A context budget cache hit is **correct behavior** — it means the file is already in context
+and re-reading it would waste the token budget. Calling this a "violation" in the journal
+creates misleading logs. The event name is `LAW3_CACHE_HIT` with `severity: "info"` to make
+the semantics explicit:
+
+```python
+# In build_prompt() skip branch:
+append_journal({
+    "event": "LAW3_CACHE_HIT",
+    "law": 3,
+    "ticket": ticket_id or "drain",
+    "path": cf,
+    "reason": reason,
+    "detail": "Context budget cache hit — file skipped (correct behavior, budget conserved)",
+    "severity": "info",
+})
+```
+
+This makes log scanning unambiguous: `LAW_VIOLATION` always means a real rule failure;
+`LAW3_CACHE_HIT` means the system is working as intended.
+
+### Law §2 Severity Model
+
+§2 is a **hard block in normal `drain()` flow** and a **soft warning only when `--ticket` flag
+bypasses `drain()`**. The check is:
+
+```python
+if bypassed_drain:
+    print("  [law2] WARNING: scratchpad not read (--ticket bypass) — violation logged")
+else:
+    raise LawViolationError("Law §2 VIOLATION: SCRATCHPAD_READ not in session journal")
+```
+
+This eliminates the ambiguity in the original spec where §2 was universally soft.
 
 ### Task 1 — `SequenceGate.assert_scratch_written(ticket_id)`
 
@@ -178,58 +221,48 @@ else:
     })
 ```
 
-**In `execute_ticket()`** after `SCRATCH_INIT`, check that `SCRATCHPAD_READ` exists in the
-current session's journal before proceeding:
+**In `execute_ticket()`** after `SCRATCH_INIT` — hard block in normal flow, soft warning
+only when `--ticket` bypass is active:
 
 ```python
 # Law §2 check: scratchpad must have been read this session
 session_scratchpad_read = _session_has_event("SCRATCHPAD_READ")
 if not session_scratchpad_read:
+    detail = "SCRATCHPAD_READ not found in session — drain() skipped Law §2 init"
     append_journal({
         "event": "LAW_VIOLATION", "law": 2, "ticket": ticket_id,
-        "detail": "SCRATCHPAD_READ not found in session — drain() skipped Law §2 init",
+        "detail": detail,
     })
-    # Non-fatal: emit warning but do not block (drain may have been bypassed by --ticket flag)
-    print(f"  [law2] WARNING: scratchpad not read this session — violation logged")
+    if bypassed_drain:
+        # --ticket flag skips drain() by design — soft warning only
+        print(f"  [law2] WARNING: scratchpad not read (--ticket bypass) — violation logged")
+    else:
+        # Normal drain() path — hard block
+        return _handle_failure(ticket, ip_path, detail)
 ```
 
 Add helper `_session_has_event(event_name)` that reads `JOURNAL_PATH` and checks for the event
 within the current `SESSION_UUID`.
 
-### Task 4 — Law §3 violation logging
+### Task 4 — Law §3 cache hit logging
 
-In `build_prompt()`, the existing pattern is:
-
-```python
-should, reason = CTX_BUDGET.should_read(cf, zone="ticket_context")
-if should:
-    content = tool_read_file(cf)
-    CTX_BUDGET.mark_read(cf, zone="ticket_context")
-    ...
-else:
-    print(f"  [ctx] SKIP {cf} — {reason}")
-    prompt += f"\\n\\n--- {cf} {summary} ---"
-```
-
-The skip branch is already correct. Law §3 violation only occurs if code reads a file despite
-`should_read()` returning False. To detect this, wrap the skip branch with a journal event:
+In `build_prompt()`, the skip branch emits `LAW3_CACHE_HIT` (not `LAW_VIOLATION`):
 
 ```python
 else:
     summary = CTX_BUDGET.get_read_summary(cf) or f"[{reason}]"
     print(f"  [ctx] SKIP {cf} — {summary}")
     append_journal({
-        "event": "LAW_VIOLATION", "law": 3, "ticket": ticket_id if ticket_id else "drain",
-        "path": cf, "reason": reason,
-        "detail": "Context budget cache hit — file skipped per Law §3",
-        "severity": "info",  # info, not error — skip is correct behaviour
+        "event": "LAW3_CACHE_HIT",
+        "law": 3,
+        "ticket": ticket_id if ticket_id else "drain",
+        "path": cf,
+        "reason": reason,
+        "detail": "Context budget cache hit — file skipped (correct behavior, budget conserved)",
+        "severity": "info",
     })
-    prompt += f"\\n\\n--- {cf} {summary} ---"
+    prompt += f"\n\n--- {cf} {summary} ---"
 ```
-
-Note: Law §3 "violation" here is **informational** — it records *when* the law saved a context
-read. A true violation (reading anyway) would require bypassing `should_read()`, which the current
-code never does. The journal entry provides an audit trail of cache hits for tuning.
 
 ---
 
@@ -239,9 +272,8 @@ code never does. The journal entry provides an audit trail of cache hits for tun
 - No files outside Scope may be created or modified
 - `LawViolationError` must be importable from `agent.sequence_gate` in tests
 - Law §1 enforcement is a **hard block** — ticket cannot close without scratch activity
-- Law §2 enforcement is a **soft warning** — `--ticket` flag bypasses `drain()` so §2 cannot
-  always be guaranteed; log but do not fail
-- Law §3 enforcement is **informational only** — records cache hits, not actual violations
+- Law §2 enforcement is a **hard block in normal drain() flow**; soft warning only under `--ticket` bypass
+- Law §3 enforcement is **informational only** — event name `LAW3_CACHE_HIT` makes this explicit
 - On any failure: `troubleshoot` skill → halt for human input
 
 ---
@@ -253,11 +285,12 @@ The task is complete when:
 - [ ] `agent/sequence_gate.py` exports `LawViolationError` and `assert_scratch_written()`
 - [ ] `execute_ticket()` calls `assert_scratch_written()` before `TICKET_CLOSED` write
 - [ ] `drain()` emits `SCRATCHPAD_READ` journal event at session start
-- [ ] `execute_ticket()` checks for `SCRATCHPAD_READ` and logs `LAW_VIOLATION` if absent
-- [ ] `build_prompt()` emits `LAW_VIOLATION` (severity: info) on every context cache hit
-- [ ] `tests/test_luffy_law.py` has ≥6 passing tests covering §1 hard block, §2 warning, §3 info
+- [ ] `execute_ticket()` checks for `SCRATCHPAD_READ` and raises `LawViolationError` in normal flow (soft warning only under `--ticket` bypass)
+- [ ] `build_prompt()` emits `LAW3_CACHE_HIT` (severity: info) on every context cache hit
+- [ ] `tests/test_luffy_law.py` has ≥6 passing tests covering §1 hard block, §2 hard/soft split, §3 info event
 - [ ] `pytest tests/test_luffy_law.py -v` → 6 passed, 0 failed
 - [ ] `pytest tests/ -v` → 0 failed (existing skips allowed)
+- [ ] `pytest tests/test_ticket_io.py -v -k 'graph_scope or return_to'` → 4 passed (STEP-09 fix)
 - [ ] `GATE-REPORT.md` shows ALL GREEN
 - [ ] Journal entry written with full anchor object schema
 - [ ] `git commit -m "STEP-11: Luffy Law mechanical enforcement"` and pushed
@@ -270,8 +303,9 @@ The task is complete when:
 |---|---|
 | STEP-08E (FIFO retention) | Must be complete — `prune_logs()` must exist before touching `execute_ticket()` |
 | STEP-09 (Graphify) | Independent — STEP-11 does not touch `tools/graphify.py` |
+| STEP-09 (ticket_io round-trip fix) | **Prerequisite for STEP-12** — `graph_scope`/`return_to` must round-trip losslessly before child_runner can dispatch tickets |
 | STEP-10-D (context budget + sequence gate) | **Prerequisite** — `ContextBudget` and `SequenceGate` must be live |
-| STEP-12 (child_runner) | STEP-11 must be complete — Law §1 enforcement is a precondition for child spawning |
+| STEP-12-A (child_runner) | STEP-11 must be complete — Law §1 enforcement is a precondition for child spawning |
 
 ---
 
@@ -280,8 +314,8 @@ The task is complete when:
 ```
 ## Scratchpad
 **Active ticket:** STEP-11
-**Status:** spec written — awaiting Build phase
-**Last action:** [09:42] Spec pushed to AI-FIRST/STEP-11-LUFFY-LAW-ENFORCEMENT.md
-**Blockers:** none — STEP-10-D prerequisites are live
+**Status:** spec updated — §2 severity finalized (hard in drain, soft under --ticket), LAW3_CACHE_HIT renamed, STEP-09 fix included in DoD
+**Last action:** [2026-04-10] Spec pushed with §2 hard/soft split, LAW3_CACHE_HIT rename, STEP-09 round-trip gate
+**Blockers:** none — STEP-10-D prerequisites are live, STEP-09 ticket_io fix is live
 **Next:** Implement Task 1 — add LawViolationError + assert_scratch_written() to agent/sequence_gate.py
 ```

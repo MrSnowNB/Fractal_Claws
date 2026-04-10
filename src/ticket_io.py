@@ -23,6 +23,9 @@ Backward compatibility
     still do extras['task'], extras['depends_on'], etc.
     The as_dict() shim is preserved for serialization use cases only.
     runner.py must use ticket.field attribute access — not ticket.get() or ticket[key].
+
+[STEP-09 fix] graph_scope and return_to are now fully hydrated by load_ticket()
+and round-trip losslessly through from_dict(to_dict()).
 """
 
 from __future__ import annotations
@@ -67,6 +70,8 @@ class ValidationWarning(UserWarning):
 _REQUIRED_FIELDS: frozenset[str] = frozenset({"ticket_id"})
 
 # Fields filled with safe defaults if absent (backward compat).
+# STEP-09 fix: graph_scope and return_to are now included so they are
+# preserved through load → save → reload cycles without silent data loss.
 _DEFAULTS: dict = {
     "depth":         0,
     "parent":        None,
@@ -93,6 +98,8 @@ _DEFAULTS: dict = {
     "gate_command":  "",
     "acceptance_criteria": "",
     "max_retries":   None,
+    "graph_scope":   None,   # STEP-09 fix — was missing; silently dropped on load
+    "return_to":     None,   # STEP-09 fix — was missing; silently dropped on load
 }
 
 
@@ -189,6 +196,10 @@ def load_ticket(path: str) -> Ticket:
     Unknown status/priority values are silently coerced to PENDING/MEDIUM
     (logged at WARNING level) — never raise on unknown enum values.
 
+    [STEP-09 fix] graph_scope and return_to are now fully hydrated — they
+    were previously silently dropped because they were absent from both the
+    Ticket() constructor call and _DEFAULTS.
+
     Raises
     ------
     TicketIOError
@@ -234,6 +245,8 @@ def load_ticket(path: str) -> Ticket:
         consumes=raw.get("consumes", []),
         tags=raw.get("tags", []),
         agent=raw.get("agent", ""),
+        graph_scope=raw.get("graph_scope"),   # STEP-09 fix
+        return_to=raw.get("return_to"),       # STEP-09 fix
         task_steps=raw.get("task_steps", []),
         gate_command=raw.get("gate_command", ""),
         acceptance_criteria=raw.get("acceptance_criteria", ""),
