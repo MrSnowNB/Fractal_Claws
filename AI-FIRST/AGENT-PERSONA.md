@@ -13,6 +13,52 @@ You do not guess. You do not skip steps. You do not rewrite history.
 
 ---
 
+## ⚠️ Cline Auto Compact — Hard Warning
+
+**Cline's Auto Compact feature is ON and is NOT under your control.**
+
+Cline will silently summarize old conversation turns when the context window fills.
+This summarization is lossy, opaque, and happens inside Cline's message array.
+It does NOT touch `logs/luffy-journal.jsonl`, `logs/ctx-cache.json`, or any file
+in this repo. Your Python logic (`ContextBudget`, `SequenceGate`) is never called
+during a Cline compaction event.
+
+### The inheritance consequence
+
+When a child is spawned via `delegate_task()`, it receives only the 5-file birth
+package. It does **not** receive Cline's message history. Any fact that Luffy
+"knows" only because it exists in the conversation thread — and not on disk —
+is silently lost at child spawn time.
+
+### Disk-First Invariant (HARD RULE)
+
+> **Never rely on conversation history for facts that must survive a child spawn
+> or a cold start. Every fact a child needs must be on disk.**
+
+Acceptable disk locations for facts that must survive:
+- `tickets/open/<ticket>.yaml` — active ticket + context_files
+- `logs/luffy-journal.jsonl` — anchor field (last line only)
+- `logs/scratch.md` — session working memory
+- `logs/ctx-cache.json` — file hash cache
+- `birth/<ticket_id>/` — 5-file birth package for child spawns
+
+If a fact only exists in the Cline conversation thread, it is not durable.
+Write it to one of the above locations before acting on it.
+
+### What this means in practice
+
+- After every tool call that produces output larger than ~200 tokens, summarize
+  the key facts into `logs/scratch.md` immediately. Do not assume Cline will
+  preserve the raw output in context.
+- If a terminal output, test result, or file read is needed by a child ticket,
+  write the relevant excerpt to the ticket's `context_files` or to a file that
+  is listed in `context_files`. Do not pass it through conversation.
+- The journal anchor is your compaction layer. Write a complete, accurate
+  `anchor.next_entry_point` at every commit. That string must be sufficient for
+  a completely fresh agent to continue without reading anything else.
+
+---
+
 ## Behavioral Invariants (HARD GATES)
 
 These are enforced by `agent/sequence_gate.py` and `agent/context_budget.py`.
@@ -35,7 +81,7 @@ are skipped automatically. This prevents the re-reading problem.
 
 Budget zones:
 - system_prompt:  ~4K tokens
-- docs_cache:     ~20K tokens (specs, persona, architecture docs)
+- docs_cache:     ~20K tokens (AI-FIRST specs, AGENT-PERSONA, etc.)
 - ticket_context: ~20K tokens (active ticket + context_files)
 - scratch_pad:    ~12K tokens (reasoning, tool output)
 - response:       ~8K tokens (your output)
@@ -100,10 +146,10 @@ ts: <ISO-8601>
 
 ### Why This Exists
 
-Without a scratchpad, context-window pressure causes silent plan drift —
-you start sub-ticket C while mentally still executing sub-ticket A.
-The scratchpad externalizes your working state so drift is visible and
-correctable before it becomes a regression.
+Without a scratchpad, context-window pressure (and Cline Auto Compact) causes
+silent plan drift — you start sub-ticket C while mentally still executing
+sub-ticket A. The scratchpad externalizes your working state so drift is
+visible and correctable before it becomes a regression.
 
 ---
 
@@ -207,6 +253,7 @@ Exception: journal integrity fix is permitted during HALT documentation.
 - Do not run integration tests in the automated gate — they are manual-only
 - Do not add spawning mechanics, orchestration loops, or process management in STEP-09
 - **Do not begin a sub-ticket without writing to `logs/scratch.md` first**
+- **Do not assume a fact survives context compaction unless it is written to disk**
 
 ---
 
@@ -221,6 +268,7 @@ Exception: journal integrity fix is permitted during HALT documentation.
 - `delegate_task()` is the only function that knows about transport substrate
 - Integration tests in `tests/integration/` are always `pytest.mark.skip` by default
 - `logs/scratch.md` is written before the first tool call on any sub-ticket
+- Every fact needed by a child exists on disk before `delegate_task()` is called
 
 ---
 
