@@ -31,6 +31,7 @@
 {"step": "STEP-10-A", "action": "implement graphify_repo() method in ContextBudget", "status": "done", "agent_id": "luffy-v1", "files_completed": ["agent/context_budget.py (graphify_repo() method)"], "anchor": {"system_state": "graphify_repo() implemented, pytest 228 passed 1 failed (pre-existing), git commit done", "next_entry_point": "STEP-10-B: graphify_repo() on TicketIO"}, "ts": "2026-04-09T19:46:54"}
 {"timestamp": "2026-04-09T21:39:40", "step": "STEP-10-B", "status": "completed", "result": "Graph created with 23 nodes, 13 edges, saved to logs/STEP-10-B-graph.yaml"}
 {"ts":"2026-04-10T10:58:44-04:00","step":"STEP-10-C","agent_id":"luffy-v1","action":"gate passed","status":"done","files":["tests/test_step10_graphify.py"],"anchor":{"system_state":"test_step10_graphify.py 4/4 passed; graphify_repo path-resolution bug fixed","open_invariants":["journal append-only","no code changes in gate tickets"],"next_entry_point":"STEP-10-D: run full suite + verify GRAPHIFY_COMPLETE in journal + verify ctx-cache.json"}}
+{"ts":"2026-04-10T11:09:00-04:00","event":"GRAPHIFY_COMPLETE","step":"STEP-10-A","agent_id":"luffy-v1","files_scanned":2,"tokens_estimated":3062,"zone_summary":{"docs_cache":0,"ticket_context":3062,"scratch_pad":0,"system_prompt":0,"response":0}}
 {"ticket_id": "STEP-02-A", "step": "terminal-tool-setup", "action": "committed tools/terminal.py and updated toolbox.yaml", "status": "success", "detail": "Terminal tool implementation complete. MCP tool connection error logged - no github MCP server configured.", "agent_id": "luffy-v1", "ts": "2026-04-09T21:46:16Z", "timestamp": "2026-04-09T21:46:16Z"}
 {"step": "CATCH-UP-APR09", "action": "manual journal anchor \u2014 work completed without journal entries", "status": "done", "agent_id": "luffy-v1", "files_completed": ["src/operator_v7.py (graph_scope, return_to fields)", "agent/context_budget.py", "agent/sequence_gate.py", "agent/runner.py (v7 wiring)", "tests/test_step09_schema.py", "tests/test_step09_luffy_loop.py (skip fix)"], "anchor": {"system_state": "STEP-09 complete, v7 merged, context_budget + sequence_gate live, 206 passed 15 skipped 7 failed pre-existing", "next_entry_point": "STEP-10-A: graphify_repo() on ContextBudget"}, "ts": "2026-04-09T22:17:11"}
 {"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T14:49:32.881581Z", "session": "b087ce3b-8144-412f-b327-b8803598122c"}
@@ -40,3 +41,53 @@
 {"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T10:49:32Z", "timestamp": "2026-04-10T10:49:32Z"}
 {"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T10:49:32Z", "timestamp": "2026-04-10T10:49:32Z"}
 {"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T10:49:32Z", "timestamp": "2026-04-10T10:49:32Z"}
+{"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T15:03:26.993744Z", "session": "237bc842-c24d-4ede-98ce-8dd685a3ec71"}
+{"event": "TICKET_CLOSED", "ticket": "TASK-001", "attempt": 1, "wall_sec": 0.0, "tokens_in": null, "tokens_out": null, "ts": "2026-04-10T15:03:26.996118Z", "session": "237bc842-c24d-4ede-98ce-8dd685a3ec71"}
+{"step": "test", "action": "test_action", "status": "success", "agent_id": "luffy-v1", "ts": "2026-04-10T11:03:26Z", "timestamp": "2026-04-10T11:03:26Z"}
+{"step": "test", "action": "custom_action", "status": "ok", "agent_id": "custom-bot-v2", "ts": "2026-04-10T11:03:26Z", "timestamp": "2026-04-10T11:03:26Z"}
+{"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T11:03:27Z", "timestamp": "2026-04-10T11:03:27Z"}
+{"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T11:03:27Z", "timestamp": "2026-04-10T11:03:27Z"}
+{"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T11:03:27Z", "timestamp": "2026-04-10T11:03:27Z"}
+{"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T15:05:02.529242Z", "session": "42f5119f-d949-44d0-810d-2f21fadb8479"}
+{"event": "TICKET_CLOSED", "ticket": "TASK-001", "attempt": 1, "wall_sec": 0.0, "tokens_in": null, "tokens_out": null, "ts": "2026-04-10T15:05:02.530794Z", "session": "42f5119f-d949-44d0-810d-2f21fadb8479"}
+{"step": "test", "action": "test_action", "status": "success", "agent_id": "luffy-v1", "ts": "2026-04-10T11:05:02Z", "timestamp": "2026-04-10T11:05:02Z"}
+{"step": "test", "action": "custom_action", "status": "ok", "agent_id": "custom-bot-v2", "ts": "2026-04-10T11:05:02Z", "timestamp": "2026-04-10T11:05:02Z"}
+{"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T11:05:02Z", "timestamp": "2026-04-10T11:05:02Z"}
+{"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T11:05:02Z", "timestamp": "2026-04-10T11:05:02Z"}
+{"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T11:05:02Z", "timestamp": "2026-04-10T11:05:02Z"}
+{"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T15:07:38.054683Z", "session": "cce4241e-4719-4e83-9a1a-32dc5a5c2309"}
+{"event": "TICKET_CLOSED", "ticket": "TASK-001", "attempt": 1, "wall_sec": 0.0, "tokens_in": null, "tokens_out": null, "ts": "2026-04-10T15:07:38.058667Z", "session": "cce4241e-4719-4e83-9a1a-32dc5a5c2309"}
+{"step": "test", "action": "test_action", "status": "success", "agent_id": "luffy-v1", "ts": "2026-04-10T11:07:38Z", "timestamp": "2026-04-10T11:07:38Z"}
+{"step": "test", "action": "custom_action", "status": "ok", "agent_id": "custom-bot-v2", "ts": "2026-04-10T11:07:38Z", "timestamp": "2026-04-10T11:07:38Z"}
+{"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T11:07:38Z", "timestamp": "2026-04-10T11:07:38Z"}
+{"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T11:07:38Z", "timestamp": "2026-04-10T11:07:38Z"}
+{"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T11:07:38Z", "timestamp": "2026-04-10T11:07:38Z"}
+{"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T15:11:10.598822Z", "session": "ae0caa2b-7596-49e8-8d27-53aff925197d"}
+{"event": "TICKET_CLOSED", "ticket": "TASK-001", "attempt": 1, "wall_sec": 0.0, "tokens_in": null, "tokens_out": null, "ts": "2026-04-10T15:11:10.601130Z", "session": "ae0caa2b-7596-49e8-8d27-53aff925197d"}
+{"step": "test", "action": "test_action", "status": "success", "agent_id": "luffy-v1", "ts": "2026-04-10T11:11:10Z", "timestamp": "2026-04-10T11:11:10Z"}
+{"step": "test", "action": "custom_action", "status": "ok", "agent_id": "custom-bot-v2", "ts": "2026-04-10T11:11:10Z", "timestamp": "2026-04-10T11:11:10Z"}
+{"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T11:11:10Z", "timestamp": "2026-04-10T11:11:10Z"}
+{"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T11:11:10Z", "timestamp": "2026-04-10T11:11:10Z"}
+{"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T11:11:10Z", "timestamp": "2026-04-10T11:11:10Z"}
+{"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T15:14:32.208838Z", "session": "6f0bb3c4-bc50-4d61-9c26-6209d8a8eb85"}
+{"event": "TICKET_CLOSED", "ticket": "TASK-001", "attempt": 1, "wall_sec": 0.0, "tokens_in": null, "tokens_out": null, "ts": "2026-04-10T15:14:32.210326Z", "session": "6f0bb3c4-bc50-4d61-9c26-6209d8a8eb85"}
+{"step": "test", "action": "test_action", "status": "success", "agent_id": "luffy-v1", "ts": "2026-04-10T11:14:32Z", "timestamp": "2026-04-10T11:14:32Z"}
+{"step": "test", "action": "custom_action", "status": "ok", "agent_id": "custom-bot-v2", "ts": "2026-04-10T11:14:32Z", "timestamp": "2026-04-10T11:14:32Z"}
+{"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T11:14:32Z", "timestamp": "2026-04-10T11:14:32Z"}
+{"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T11:14:32Z", "timestamp": "2026-04-10T11:14:32Z"}
+{"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T11:14:32Z", "timestamp": "2026-04-10T11:14:32Z"}
+{"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T15:24:28.495013Z", "session": "059034c4-d610-497b-9592-1abf395c2299"}
+{"event": "TICKET_CLOSED", "ticket": "TASK-001", "attempt": 1, "wall_sec": 0.0, "tokens_in": null, "tokens_out": null, "ts": "2026-04-10T15:24:28.498057Z", "session": "059034c4-d610-497b-9592-1abf395c2299"}
+{"step": "test", "action": "test_action", "status": "success", "agent_id": "luffy-v1", "ts": "2026-04-10T11:24:28Z", "timestamp": "2026-04-10T11:24:28Z"}
+{"step": "test", "action": "custom_action", "status": "ok", "agent_id": "custom-bot-v2", "ts": "2026-04-10T11:24:28Z", "timestamp": "2026-04-10T11:24:28Z"}
+{"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T11:24:28Z", "timestamp": "2026-04-10T11:24:28Z"}
+{"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T11:24:28Z", "timestamp": "2026-04-10T11:24:28Z"}
+{"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T11:24:28Z", "timestamp": "2026-04-10T11:24:28Z"}
+{"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T15:27:08.740602Z", "session": "3c6990ae-80f5-411b-99fa-53b38b34b256"}
+{"event": "TICKET_CLOSED", "ticket": "TASK-001", "attempt": 1, "wall_sec": 0.0, "tokens_in": null, "tokens_out": null, "ts": "2026-04-10T15:27:08.746952Z", "session": "3c6990ae-80f5-411b-99fa-53b38b34b256"}
+{"step": "test", "action": "test_action", "status": "success", "agent_id": "luffy-v1", "ts": "2026-04-10T11:27:08Z", "timestamp": "2026-04-10T11:27:08Z"}
+{"step": "test", "action": "custom_action", "status": "ok", "agent_id": "custom-bot-v2", "ts": "2026-04-10T11:27:08Z", "timestamp": "2026-04-10T11:27:08Z"}
+{"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T11:27:08Z", "timestamp": "2026-04-10T11:27:08Z"}
+{"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T11:27:08Z", "timestamp": "2026-04-10T11:27:08Z"}
+{"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T11:27:08Z", "timestamp": "2026-04-10T11:27:08Z"}
+{"ts": "2026-04-10T11:28:04-04:00", "step": "STEP-10-D", "agent_id": "luffy-v1", "action": "gate passed", "status": "done", "files": ["logs/luffy-journal.jsonl", "logs/ctx-cache.json"], "anchor": {"system_state": "STEP-10 complete: graphify_repo working, 4 tests green, ctx-cache.json valid", "open_invariants": ["journal append-only", "ctx-cache.json hashes non-empty"], "next_entry_point": "STEP-11-A: add LawViolationError + assert_scratch_written() to agent/sequence_gate.py"}}

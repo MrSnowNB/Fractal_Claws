@@ -1,6 +1,6 @@
 ticket_id: STEP-10-D
 title: "STEP-10 gate: pytest green + journal anchor + cache artifact"
-status: open
+status: closed
 priority: high
 depth: 1
 parent: STEP-10
