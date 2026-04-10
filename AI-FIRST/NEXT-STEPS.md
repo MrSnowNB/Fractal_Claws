@@ -66,6 +66,40 @@ Do not backfill old entries. Write new entries with `anchor` from STEP-07-A onwa
 
 ---
 
+## Luffy Law §2 — Scratchpad Protocol
+
+> **Read scratchpad first. Write scratchpad often. Never re-read what is already summarized.**
+
+The `## Scratchpad` section at the bottom of this file is Luffy's live working memory.
+
+### Rules:
+
+1. **ON TASK START:** Read ONLY `AI-FIRST/NEXT-STEPS.md`. If Scratchpad contains
+   the current ticket ID and a recent timestamp, do **NOT** re-read journal, closed
+   tickets, or any spec file. Trust the scratchpad.
+2. **AFTER EACH ACTION:** Append one line to Scratchpad:
+   `- [HH:MM] <action> → <result>`
+3. **BEFORE COMMIT:** Update `**Status:**` and `**Next:**` fields in Scratchpad.
+4. **NEVER** read a file you already summarized in Scratchpad during this session.
+5. **DO NOT** read `logs/luffy-journal.jsonl` or `tickets/closed/*.yaml` if
+   Scratchpad already contains the current ticket ID.
+
+### Scratchpad Update Template:
+
+```
+## Scratchpad
+**Active ticket:** STEP-XX-Y
+**Status:** <one phrase: e.g. running pytest, writing journal, closing ticket>
+**Last action:** [HH:MM] <action> → <result>
+**Blockers:** none | <describe if any>
+**Next:** <next concrete action>
+```
+
+**Violation:** If Luffy reads the same file twice in one session without writing
+an update between reads, that is a Scratchpad Protocol violation. Log it.
+
+---
+
 ## HALT Protocol
 
 If the human says HALT:
@@ -282,3 +316,16 @@ Every step must be completable on any machine with:
 
 Integration tests go in `tests/integration/` and are ALWAYS skipped by default.
 Run manually: `pytest tests/integration/ -v -s --no-header`
+
+---
+
+## Scratchpad
+
+**Active ticket:** STEP-10-D  
+**Status:** ready — awaiting Luffy restart  
+**Last action:** [09:16] Human pushed Luffy Law §2 + Scratchpad Protocol to NEXT-STEPS.md → pushed  
+**Blockers:** none  
+**Next:** Run `pytest tests/ -v`, verify GRAPHIFY_COMPLETE in journal, verify `logs/ctx-cache.json` exists, close STEP-10-D ticket, then commit
+
+> Scratchpad Protocol: update this section after every action. Never re-read
+> `logs/luffy-journal.jsonl` or `tickets/closed/*.yaml` when this section is current.
