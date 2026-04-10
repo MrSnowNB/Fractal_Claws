@@ -65,10 +65,10 @@ class ContextBudget:
         self.ctx_limit = ctx_limit
         self.cache_path = Path(cache_path)
         self.zones = dict(zones or DEFAULT_ZONES)
-        self._file_hashes: dict[str, str] = {}   # path -> sha256
-        self._file_tokens: dict[str, int] = {}   # path -> approx token count
+        self._file_hashes: dict[str, str] = {}   # resolved path -> sha256
+        self._file_tokens: dict[str, int] = {}   # resolved path -> approx token count
         self._zone_usage: dict[str, int] = {z: 0 for z in self.zones}
-        self._session_reads: set[str] = set()     # files read this session
+        self._session_reads: set[str] = set()     # resolved paths read this session
         self._load_cache()
 
     # ── persistence ───────────────────────────────────────────────────────
@@ -213,38 +213,62 @@ class ContextBudget:
     # ── zone detection ──────────────────────────────────────────────────────
 
     def _detect_zone(self, path: str) -> str:
-        """Detect the budget zone for a file based on path patterns."""
-        p = path.lower()
-        if "system" in p or "persona" in p:
+        """Detect the budget zone for a file based on path patterns.
+
+        Rules (in priority order):
+          system_prompt  — path contains 'system' or 'persona'
+          ticket_context — path contains 'ticket' or 'tickets/'
+          scratch_pad    — path contains 'logs/' or 'scratch' or 'temp'
+          docs_cache     — everything else (AI-FIRST/, src/, agent/, etc.)
+        """
+        # Normalise to forward-slash parts for cross-platform matching
+        parts = Path(path).parts
+        lowered = path.replace("\\", "/").lower()
+
+        if "system" in lowered or "persona" in lowered:
             return "system_prompt"
-        if "spec" in p or "policy" in p or "clinerules" in p:
-            return "docs_cache"
-        if "ticket" in p or "step" in p:
+        # Match the directory name 'tickets' anywhere in the path
+        if any(p.lower() == "tickets" for p in parts) or "ticket" in lowered:
             return "ticket_context"
-        if "scratch" in p or "temp" in p:
+        # logs/ directory maps to scratch_pad (runtime output, not docs)
+        if any(p.lower() == "logs" for p in parts) or "scratch" in lowered or "temp" in lowered:
             return "scratch_pad"
         return "docs_cache"
 
-    # ── graphify_repo() ───────────────────────────────────────────────────────
+    # ── graphify_repo() ──────────────────────────────────────────────────────
 
     def graphify_repo(self, repo_path: str = "tickets/closed") -> dict:
-        """Build a knowledge graph from files in a directory.
+        """Scan a directory, populate the SHA256 content cache, and return a
+        lightweight knowledge graph.
+
+        All internal keys use **resolved absolute paths** so that results are
+        consistent with should_read() / mark_read() which also resolve paths.
 
         Args:
-            repo_path: Directory containing files to scan (default: tickets/closed)
+            repo_path: Directory to scan (default: tickets/closed)
 
         Returns:
-            Graph dict with nodes, edges, and metadata
-        """
-        from pathlib import Path
+            {
+              "nodes":    [{id, label, type, file, content_hash, tokens, zone}, ...],
+              "edges":    [{from, to, type}, ...],
+              "metadata": {source_dir, generated_at, file_count, files_scanned,
+                           tokens_estimated, zone_summary},
+            }
 
-        graph = {
+        Note: ``metadata`` includes ``files_scanned``, ``tokens_estimated``, and
+        ``zone_summary`` so callers can inspect budget impact without reading every
+        node individually.
+        """
+        graph: dict = {
             "nodes": [],
             "edges": [],
             "metadata": {
                 "source_dir": repo_path,
                 "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "file_count": 0,
+                "files_scanned": 0,
+                "tokens_estimated": 0,
+                "zone_summary": {z: 0 for z in self.zones},
             },
         }
 
@@ -253,51 +277,59 @@ class ContextBudget:
             graph["metadata"]["error"] = f"Directory not found: {repo_path}"
             return graph
 
-        # Scan all files (not just yaml)
-        all_files = [f for f in repo_dir.rglob("*") if f.is_file() and not f.name.startswith(".")]
+        all_files = [
+            f for f in repo_dir.rglob("*")
+            if f.is_file() and not f.name.startswith(".")
+        ]
         graph["metadata"]["file_count"] = len(all_files)
 
+        total_tokens = 0
+
         for file_path in all_files:
+            # Always use resolved absolute path — must match should_read() behaviour
+            resolved = str(file_path.resolve())
             try:
-                content = file_path.read_text(encoding="utf-8")
-                # Basic YAML parsing without external deps
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                content_hash = self.file_hash(str(file_path))
+                tokens = self.estimate_tokens(content)
+                zone = self._detect_zone(str(file_path))
+
                 node = {
                     "id": file_path.stem,
                     "label": file_path.name,
                     "type": file_path.suffix.lstrip(".") or "unknown",
-                    "file": str(file_path),
-                    "content_hash": self.file_hash(str(file_path)),
-                    "tokens": self.estimate_tokens(content),
-                    "zone": self._detect_zone(str(file_path)),
+                    "file": resolved,
+                    "content_hash": content_hash,
+                    "tokens": tokens,
+                    "zone": zone,
                 }
                 graph["nodes"].append(node)
 
-                # Populate cache for should_read() functionality
-                rel_path = str(file_path)
-                self._file_hashes[rel_path] = node["content_hash"]
-                self._session_reads.add(rel_path)
+                # Populate cache using resolved path — consistent with should_read()
+                self._file_hashes[resolved] = content_hash
+                self._session_reads.add(resolved)
+                total_tokens += tokens
+                graph["metadata"]["zone_summary"][zone] = (
+                    graph["metadata"]["zone_summary"].get(zone, 0) + 1
+                )
 
-                # Extract parent relationship if present (STEP-09 → STEP-10-A)
-                if file_path.stem.count("-") > 1:
-                    parent_id = "-".join(file_path.stem.split("-")[:-1])
-                    graph["edges"].append({
-                        "from": parent_id,
-                        "to": file_path.stem,
-                        "type": "depends_on",
-                    })
             except Exception as e:
                 graph["metadata"].setdefault("errors", []).append(
                     f"{file_path.name}: {str(e)}"
                 )
 
-        # Deduplicate edges
-        seen = set()
-        unique_edges = []
-        for edge in graph["edges"]:
-            key = (edge["from"], edge["to"], edge["type"])
-            if key not in seen:
-                seen.add(key)
-                unique_edges.append(edge)
-        graph["edges"] = unique_edges
+        # Parent–child edges from naming convention (STEP-10-B → parent STEP-10)
+        seen: set[tuple] = set()
+        for node in graph["nodes"]:
+            stem = node["id"]
+            if stem.count("-") > 1:
+                parent_id = "-".join(stem.split("-")[:-1])
+                key = (parent_id, stem, "depends_on")
+                if key not in seen:
+                    seen.add(key)
+                    graph["edges"].append({"from": parent_id, "to": stem, "type": "depends_on"})
+
+        graph["metadata"]["files_scanned"] = len(graph["nodes"])
+        graph["metadata"]["tokens_estimated"] = total_tokens
 
         return graph

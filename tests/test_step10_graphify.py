@@ -2,144 +2,102 @@
 """test_step10_graphify.py — pytest tests for ContextBudget.graphify_repo()
 
 Uses tmp_path fixture exclusively — no real repo paths.
+All 4 tests match the acceptance criteria in tickets/open/STEP-10-C.yaml.
 """
 import pytest
 from pathlib import Path
 from agent.context_budget import ContextBudget
 
 
-# ───────────────────────────────────────────────────────────────────────────────
-# test_graphify_populates_cache
-# ───────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. test_graphify_populates_cache
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_graphify_populates_cache(tmp_path):
-    """graphify_repo scans directory and populates cache."""
-    # Create tmp dir with 3 files: one .py, one .md, one .yaml
-    py_file = tmp_path / "test.py"
-    py_file.write_text("x = 1\n")
+    """graphify_repo scans 3 files, returns files_scanned==3, populates _file_hashes."""
+    (tmp_path / "test.py").write_text("x = 1\n")
+    (tmp_path / "readme.md").write_text("# Test\n")
+    (tmp_path / "config.yaml").write_text("key: value\n")
 
-    md_file = tmp_path / "readme.md"
-    md_file.write_text("# Test\n")
-
-    yaml_file = tmp_path / "config.yaml"
-    yaml_file.write_text("key: value\n")
-
-    # Instantiate ContextBudget with cache_path inside tmp_path
-    cache_path = str(tmp_path / "ctx-cache.json")
-    budget = ContextBudget(cache_path=cache_path)
-
-    # Call budget.graphify_repo(root=str(tmp_dir))
-    # The method is graphify_repo(repo_path=...) so we pass the tmp dir as repo_path
+    budget = ContextBudget(cache_path=str(tmp_path / "ctx-cache.json"))
     result = budget.graphify_repo(repo_path=str(tmp_path))
 
-    # Assert return dict has keys: files_scanned, tokens_estimated, zone_summary
-    # Note: current implementation returns nodes, edges, metadata
-    # This test checks the actual return structure
+    # Return structure
     assert "nodes" in result
     assert "edges" in result
     assert "metadata" in result
 
-    # Assert files_scanned == 3
-    assert len(result["nodes"]) == 3
+    # files_scanned key present and correct
+    assert result["metadata"]["files_scanned"] == 3
 
-    # Assert len(budget._file_hashes) == 3
+    # Cache populated with 3 resolved paths
     assert len(budget._file_hashes) == 3
 
 
-# ───────────────────────────────────────────────────────────────────────────────
-# test_graphify_cached_on_rescan
-# ───────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. test_graphify_cached_on_rescan
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_graphify_cached_on_rescan(tmp_path):
-    """graphify_repo caches on second scan with unchanged files."""
-    # Create tmp dir with 1 .md file
+    """After graphify_repo() twice with no changes, should_read() returns (False, 'cached')."""
     md_file = tmp_path / "readme.md"
     md_file.write_text("# Test\n")
 
-    # Instantiate ContextBudget
-    cache_path = str(tmp_path / "ctx-cache.json")
-    budget = ContextBudget(cache_path=cache_path)
-
-    # Run graphify_repo() once
+    budget = ContextBudget(cache_path=str(tmp_path / "ctx-cache.json"))
     budget.graphify_repo(repo_path=str(tmp_path))
+    budget.graphify_repo(repo_path=str(tmp_path))  # second scan — same content
 
-    # Run graphify_repo() again (no changes)
-    budget.graphify_repo(repo_path=str(tmp_path))
-
-    # Call budget.should_read(str(the_file)) — assert result is (False, "cached")
-    result = budget.should_read(str(md_file))
-    assert result == (False, "cached")
+    flag, reason = budget.should_read(str(md_file))
+    assert flag is False
+    assert reason == "cached"
 
 
-# ───────────────────────────────────────────────────────────────────────────────
-# test_graphify_changed_on_modify
-# ───────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. test_graphify_changed_on_modify
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_graphify_changed_on_modify(tmp_path):
-    """graphify_repo detects file changes on modification."""
-    # Create tmp dir with 1 .py file
+    """After graphify_repo(), modifying a file makes should_read() return 'changed'."""
     py_file = tmp_path / "test.py"
     py_file.write_text("x = 1\n")
 
-    # Instantiate ContextBudget
-    cache_path = str(tmp_path / "ctx-cache.json")
-    budget = ContextBudget(cache_path=cache_path)
-
-    # Run graphify_repo() once
+    budget = ContextBudget(cache_path=str(tmp_path / "ctx-cache.json"))
     budget.graphify_repo(repo_path=str(tmp_path))
 
-    # Modify the file content (append a line)
+    # Mutate the file — hash changes, but session_reads still has the old resolved path
     py_file.write_text("x = 1\ny = 2\n")
 
-    # Call budget.should_read(str(the_file)) — assert result[1] == "changed"
-    result = budget.should_read(str(py_file))
-    assert result[1] == "changed"
+    flag, reason = budget.should_read(str(py_file))
+    # File is in _file_hashes (seen before) but hash differs → "changed"
+    assert reason == "changed"
 
 
-# ───────────────────────────────────────────────────────────────────────────────
-# test_graphify_zone_assignment
-# ───────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. test_graphify_zone_assignment
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_graphify_zone_assignment(tmp_path):
-    """graphify_repo assigns zones based on directory structure."""
-    # Create tmp dir with subdirs: AI-FIRST/, tickets/, logs/, src/
-    ai_first = tmp_path / "AI-FIRST"
-    ai_first.mkdir()
+    """graphify_repo assigns zones: AI-FIRST→docs_cache, tickets→ticket_context, logs→scratch_pad."""
+    (tmp_path / "AI-FIRST").mkdir()
+    (tmp_path / "AI-FIRST" / "step08.md").write_text("# Step 08\n")
 
-    tickets_dir = tmp_path / "tickets"
-    tickets_dir.mkdir()
+    (tmp_path / "tickets").mkdir()
+    (tmp_path / "tickets" / "ticket.yaml").write_text("ticket_id: T1\n")
 
-    logs_dir = tmp_path / "logs"
-    logs_dir.mkdir()
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "log.md").write_text("## Log\n")
 
-    src_dir = tmp_path / "src"
-    src_dir.mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("def main(): pass\n")
 
-    # Place one .md file in each subdir
-    ai_first_file = ai_first / "step08.md"
-    ai_first_file.write_text("# Step 08\n")
-
-    tickets_file = tickets_dir / "ticket.yaml"
-    tickets_file.write_text("ticket_id: T1\n")
-
-    logs_file = logs_dir / "log.md"
-    logs_file.write_text("## Log\n")
-
-    src_file = src_dir / "main.py"
-    src_file.write_text("def main(): pass\n")
-
-    # Instantiate ContextBudget
-    cache_path = str(tmp_path / "ctx-cache.json")
-    budget = ContextBudget(cache_path=cache_path)
-
-    # Run graphify_repo(root=str(tmp_dir))
+    budget = ContextBudget(cache_path=str(tmp_path / "ctx-cache.json"))
     result = budget.graphify_repo(repo_path=str(tmp_path))
 
-    # Note: current implementation does not compute zone_summary
-    # This test checks the actual return structure
-    assert "nodes" in result
-    assert "edges" in result
-    assert "metadata" in result
+    zs = result["metadata"]["zone_summary"]
 
-    # We have 4 files, so 4 nodes
-    assert len(result["nodes"]) == 4
+    # tickets/ → ticket_context
+    assert zs["ticket_context"] == 1, f"Expected 1 ticket_context, got {zs}"
+    # logs/ → scratch_pad
+    assert zs["scratch_pad"] == 1, f"Expected 1 scratch_pad, got {zs}"
+    # AI-FIRST/ + src/ → docs_cache (≥ 2)
+    assert zs["docs_cache"] >= 2, f"Expected >=2 docs_cache, got {zs}"
