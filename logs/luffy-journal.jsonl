@@ -91,3 +91,10 @@
 {"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T11:27:08Z", "timestamp": "2026-04-10T11:27:08Z"}
 {"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T11:27:08Z", "timestamp": "2026-04-10T11:27:08Z"}
 {"ts": "2026-04-10T11:28:04-04:00", "step": "STEP-10-D", "agent_id": "luffy-v1", "action": "gate passed", "status": "done", "files": ["logs/luffy-journal.jsonl", "logs/ctx-cache.json"], "anchor": {"system_state": "STEP-10 complete: graphify_repo working, 4 tests green, ctx-cache.json valid", "open_invariants": ["journal append-only", "ctx-cache.json hashes non-empty"], "next_entry_point": "STEP-11-A: add LawViolationError + assert_scratch_written() to agent/sequence_gate.py"}}
+{"event": "TICKET_START", "ticket": "TASK-001", "attempt": 1, "deps_satisfied": true, "ts": "2026-04-10T16:52:38.567013Z", "session": "32e9046f-027e-4033-8964-fc10dbb54cad"}
+{"event": "TICKET_CLOSED", "ticket": "TASK-001", "attempt": 1, "wall_sec": 0.0, "tokens_in": null, "tokens_out": null, "ts": "2026-04-10T16:52:38.569640Z", "session": "32e9046f-027e-4033-8964-fc10dbb54cad"}
+{"step": "test", "action": "test_action", "status": "success", "agent_id": "luffy-v1", "ts": "2026-04-10T12:52:38Z", "timestamp": "2026-04-10T12:52:38Z"}
+{"step": "test", "action": "custom_action", "status": "ok", "agent_id": "custom-bot-v2", "ts": "2026-04-10T12:52:38Z", "timestamp": "2026-04-10T12:52:38Z"}
+{"step": "a", "agent_id": "luffy-v1", "ts": "2026-04-10T12:52:38Z", "timestamp": "2026-04-10T12:52:38Z"}
+{"step": "b", "agent_id": "alt-agent", "ts": "2026-04-10T12:52:38Z", "timestamp": "2026-04-10T12:52:38Z"}
+{"step": "c", "agent_id": "luffy-v1", "ts": "2026-04-10T12:52:38Z", "timestamp": "2026-04-10T12:52:38Z"}

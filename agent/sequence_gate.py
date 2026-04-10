@@ -30,6 +30,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
+
+class LawViolationError(Exception):
+    """Raised when a Luffy Law is violated (scratchpad, journal, or cache rules)."""
+    pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -272,3 +277,37 @@ class SequenceGate:
     def completed(self) -> list[str]:
         """List of completed step IDs this session."""
         return list(self._completed_steps)
+
+    # ── Luffy Law enforcement helpers ───────────────────────────────────────────
+
+    def assert_scratch_written(self, ticket_id: str) -> None:
+        """
+        Law §1: raise LawViolationError if no non-INIT scratch event exists
+        for ticket_id in the current session.
+
+        The scratch file lives at logs/scratch-{ticket_id}.jsonl.
+        A session is considered to have written scratch if any event with
+        event != SCRATCH_INIT and event != SCRATCH_CLOSE exists for this ticket.
+        """
+        scratch_path = Path("logs") / f"scratch-{ticket_id}.jsonl"
+        if not scratch_path.exists():
+            raise LawViolationError(
+                f"Law §1 VIOLATION: scratch file missing for {ticket_id}"
+            )
+
+        events = []
+        with open(scratch_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+        non_init = [e for e in events if e.get("event") not in ("SCRATCH_INIT", "SCRATCH_CLOSE")]
+        if not non_init:
+            raise LawViolationError(
+                f"Law §1 VIOLATION: scratch for {ticket_id} has no non-INIT events — "
+                f"Luffy did not write to scratchpad during execution"
+            )

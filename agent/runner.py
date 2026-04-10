@@ -54,7 +54,7 @@ from src.skill_store import match_goal_class, load_skill, write_skill, SkillLoad
 
 from agent.log_manager import prune_logs
 from agent.context_budget import ContextBudget
-from agent.sequence_gate import SequenceGate
+from agent.sequence_gate import SequenceGate, LawViolationError
 
 
 # ── config ────────────────────────────────────────────────────────────────────
@@ -618,7 +618,7 @@ END
 """
 
 
-def build_prompt(ticket: Ticket, upstream_context: str) -> str:
+def build_prompt(ticket: Ticket, upstream_context: str, ticket_id: str = "") -> str:
     prompt  = TOOL_SYNTAX
     prompt += f"\nTask: {ticket.task}"
     for cf in (ticket.context_files or []):
@@ -631,6 +631,15 @@ def build_prompt(ticket: Ticket, upstream_context: str) -> str:
         else:
             summary = CTX_BUDGET.get_read_summary(cf) or f"[{reason}]"
             print(f"  [ctx] SKIP {cf} — {summary}")
+            # Law §3: emit LAW3_CACHE_HIT on cache skip (severity: info, NOT a violation)
+            if ticket_id:
+                append_journal({
+                    "event": "LAW3_CACHE_HIT",
+                    "ticket": ticket_id,
+                    "path": cf,
+                    "severity": "info",
+                    "detail": f"Context budget cache hit — {summary}",
+                })
             prompt += f"\n\n--- {cf} {summary} ---"
     if upstream_context.strip():
         prompt += f"\n\n--- upstream results ---\n{upstream_context}"
@@ -722,6 +731,29 @@ def execute_ticket(ticket_path: str) -> bool:
 
     # Create scratch file (BUG 3 FIX)
     scratch_append(ticket_id, {"event": "SCRATCH_INIT", "attempt": attempt_n})
+
+    # Law §2 enforcement: verify SCRATCHPAD_READ was emitted in drain()
+    journal_path = os.path.join(LOG_DIR, "luffy-journal.jsonl")
+    scratchpad_read_found = False
+    if os.path.exists(journal_path):
+        with open(journal_path, "r") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line.strip())
+                    if entry.get("event") == "SCRATCHPAD_READ":
+                        scratchpad_read_found = True
+                        break
+                except json.JSONDecodeError:
+                    continue
+    if not scratchpad_read_found:
+        append_journal({
+            "event": "LAW_VIOLATION",
+            "law": 2,
+            "ticket": ticket_id,
+            "detail": "SCRATCHPAD_READ not found in drain() — Law §2 violated",
+            "hard_block": True,
+        })
+        return _handle_failure(ticket, ip_path, "Law §2 VIOLATION: SCRATCHPAD_READ not emitted in drain()")
 
     # STEP-06-B: Skill cache check
     try:
@@ -848,6 +880,16 @@ def execute_ticket(ticket_path: str) -> bool:
 
     _write_result(result_path, ticket_id, finish, tokens, raw, elapsed,
                   hw_pre, hw_post, tool_results, reason, raw_full=raw)
+
+    # Law §1 enforcement: scratch must have non-INIT events
+    try:
+        SEQ_GATE.assert_scratch_written(ticket_id)
+    except LawViolationError as e:
+        append_journal({
+            "event": "LAW_VIOLATION", "law": 1, "ticket": ticket_id,
+            "detail": str(e),
+        })
+        return _handle_failure(ticket, ip_path, f"Law §1 VIOLATION: {str(e)}")
 
     if passed:
         ticket.status = TicketStatus.CLOSED
@@ -1048,6 +1090,27 @@ def drain(once: bool = False) -> None:
         "executor": MODEL,
         "stage": CFG.get("agent", {}).get("stage", "bud"),
     })
+
+    # Law §2: read scratchpad, emit journal event
+    scratchpad_path = "AI-FIRST/NEXT-STEPS.md"
+    should, reason = CTX_BUDGET.should_read(scratchpad_path, zone="system_prompt")
+    if should:
+        scratchpad_content = tool_read_file(scratchpad_path)
+        CTX_BUDGET.mark_read(scratchpad_path, zone="system_prompt")
+        append_journal({
+            "event": "SCRATCHPAD_READ",
+            "path": scratchpad_path,
+            "law": 2,
+            "cached": False,
+        })
+    else:
+        append_journal({
+            "event": "SCRATCHPAD_READ",
+            "path": scratchpad_path,
+            "law": 2,
+            "cached": True,
+            "note": "CTX cache hit — scratchpad unchanged since last read",
+        })
 
     session_start = time.perf_counter()
     tickets_closed = 0
