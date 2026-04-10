@@ -1,0 +1,24 @@
+ticket_id: STEP-10-B
+title: Add graphify_repo() method to TicketIO
+version: '0.10.0'
+last_updated: '2026-04-09'
+depth: 0
+parent: STEP-10
+children: []
+status: closed
+closed_at: '2026-04-10T01:47:47'
+attempts: 1
+decrement: 3
+priority: medium
+task: |
+  Add a graphify_repo() method to the TicketIO class in src/ticket_io.py.
+  Implemented and verified in commits d7372f5 and 059b220.
+result_path: logs/STEP-10-B-graph.yaml
+result:
+  passed: true
+  notes: graphify_repo(), save_graph(), graphify_and_save() all implemented and tested.
+  output_path: logs/STEP-10-B-graph.yaml
+context_files:
+- src/ticket_io.py
+- src/operator_v7.py
+- agent/context_budget.py
