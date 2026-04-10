@@ -268,21 +268,67 @@ of the spec object. STEP-08 journal entry must use the full object. Do not backf
 
 ---
 
+### [ ] Step 10: ContextBudget graphify_repo() + gate — CLOSE SEQUENCE ACTIVE
+
+> **⚠️ ACTIVE WORK — DO NOT SKIP TO STEP-11**
+
+**Two tickets still open:** `tickets/open/STEP-10-C.yaml` and `tickets/open/STEP-10-D.yaml`  
+**Fixes pushed:** `agent/context_budget.py` and `tests/test_step10_graphify.py` corrected (commit a73143a)
+
+#### STEP-10-C close procedure (gate only — no code changes)
+
+1. Write scratch entry: `STEP-10-C gate run — [HH:MM]`
+2. Run: `pytest tests/test_step10_graphify.py -v`
+3. **Expected:** `4 passed, 0 failed` — if not, STOP and open a bug ticket, do not proceed
+4. Write journal entry:
+   ```json
+   {"ts":"<ISO>","step":"STEP-10-C","action":"gate passed","status":"done",
+    "files":["tests/test_step10_graphify.py"],
+    "anchor":{"system_state":"test_step10_graphify.py 4/4 passed; graphify_repo path-resolution bug fixed",
+              "open_invariants":["journal append-only","no code changes in gate tickets"],
+              "next_entry_point":"STEP-10-D: run full suite + verify GRAPHIFY_COMPLETE in journal + verify ctx-cache.json"}}
+   }
+   ```
+5. Move ticket: rename `tickets/open/STEP-10-C.yaml` → `tickets/closed/STEP-10-C.yaml`, set `status: closed`
+6. `git add tests/test_step10_graphify.py tickets/open/STEP-10-C.yaml tickets/closed/STEP-10-C.yaml logs/luffy-journal.jsonl`
+7. `git commit -m "STEP-10-C: gate passed — 4/4 graphify tests green"`
+8. `git push`
+
+#### STEP-10-D close procedure (gate only — no code changes)
+
+1. Write scratch entry: `STEP-10-D gate run — [HH:MM]`
+2. Run: `pytest tests/ -v`
+3. **Expected:** 0 failures (existing skips allowed). If any new failures appear, STOP.
+4. Inspect `logs/luffy-journal.jsonl` — check if any line contains `"event": "GRAPHIFY_COMPLETE"`
+   - If **present**: proceed
+   - If **absent**: append this journal event now (before the STEP-10-D close entry):
+     ```json
+     {"ts":"<ISO>","event":"GRAPHIFY_COMPLETE","step":"STEP-10-A","files_scanned":"<N>",
+      "tokens_estimated":"<N>","zone_summary":{"docs_cache":0,"ticket_context":0,"scratch_pad":0,"system_prompt":0,"response":0}}
+     ```
+5. Inspect `logs/ctx-cache.json` — confirm file exists and top-level key `"hashes"` is non-empty
+   - If file missing or empty: open a bug ticket STEP-10-D-BUG, STOP
+6. Append final close journal entry:
+   ```json
+   {"ts":"<ISO>","step":"STEP-10-D","action":"gate passed","status":"done",
+    "files":["logs/luffy-journal.jsonl","logs/ctx-cache.json"],
+    "anchor":{"system_state":"STEP-10 complete: graphify_repo working, 4 tests green, ctx-cache.json valid",
+              "open_invariants":["journal append-only","ctx-cache.json hashes non-empty"],
+              "next_entry_point":"STEP-11-A: add LawViolationError + assert_scratch_written() to agent/sequence_gate.py"}}
+   }
+   ```
+7. Move ticket: rename `tickets/open/STEP-10-D.yaml` → `tickets/closed/STEP-10-D.yaml`, set `status: closed`
+8. `git add tickets/open/STEP-10-D.yaml tickets/closed/STEP-10-D.yaml logs/luffy-journal.jsonl`
+9. `git commit -m "STEP-10: graphify pre-scan complete — gate passed"`
+10. `git push`
+
+---
+
 ### [ ] Step 11: Luffy Law Mechanical Enforcement
 **Spec:** `AI-FIRST/STEP-11-LUFFY-LAW-ENFORCEMENT.md` ✅ written  
+**Prerequisite:** STEP-10-D closed ← **not yet done**  
 **Files:** `agent/sequence_gate.py`, `agent/runner.py`, `tests/test_luffy_law.py` (new)  
 **Gate:** `pytest tests/test_luffy_law.py -v` (6 tests) + `pytest tests/ -v` (0 failed)  
-**Prerequisite:** STEP-10-D (context_budget + sequence_gate) live ✅
-
-**What it does:**
-- **Law §1 hard block** — `execute_ticket()` cannot write `TICKET_CLOSED` unless a
-  non-INIT scratch event exists for the ticket in the current session. Raises
-  `LawViolationError` → treated as failure → goes to ISSUE.md.
-- **Law §2 soft warning** — `drain()` emits `SCRATCHPAD_READ` journal event after reading
-  the `## Scratchpad` section of this file at session start. `execute_ticket()` checks
-  for the event and logs `LAW_VIOLATION` (non-fatal) if absent.
-- **Law §3 info log** — `build_prompt()` emits `LAW_VIOLATION` (severity: info) on every
-  context cache hit, providing an audit trail of tokens saved per session.
 
 **Sub-tasks:**
 
@@ -292,14 +338,8 @@ of the spec object. STEP-08 journal entry must use the full object. Do not backf
 | 11-B | Hook Law §1 in `execute_ticket()` before `TICKET_CLOSED` write | Luffy |
 | 11-C | Hook Law §2: `SCRATCHPAD_READ` emit in `drain()` + check in `execute_ticket()` | Luffy |
 | 11-D | Hook Law §3: `LAW_VIOLATION` info emit in `build_prompt()` on cache skip | Luffy |
-| 11-E | Write `tests/test_luffy_law.py` — 6+ tests covering §1 hard block, §2 warning, §3 info | Luffy |
-| 11-F | Gate, journal with anchor, commit `STEP-11: Luffy Law mechanical enforcement`, push | Luffy |
-
-**Invariants to preserve:**
-- Law §1 is a hard block — ticket cannot close without scratch activity
-- Law §2 is a soft warning — `--ticket` flag bypasses `drain()`, so §2 non-fatal
-- Law §3 is informational only — records cache hits, not actual violations
-- Full test suite stays green (existing skips allowed)
+| 11-E | Write `tests/test_luffy_law.py` — 6+ tests | Luffy |
+| 11-F | Gate, journal with anchor, commit, push | Luffy |
 
 ---
 
@@ -357,11 +397,11 @@ Run manually: `pytest tests/integration/ -v -s --no-header`
 
 ## Scratchpad
 
-**Active ticket:** STEP-11  
-**Status:** spec written and pushed — ready for Build phase  
-**Last action:** [09:43] Pushed STEP-11-LUFFY-LAW-ENFORCEMENT.md + updated build queue in NEXT-STEPS.md  
-**Blockers:** none — STEP-10-D prerequisites (ContextBudget, SequenceGate) are live  
-**Next:** Begin STEP-11-A — add `LawViolationError` + `assert_scratch_written()` to `agent/sequence_gate.py`
+**Active ticket:** STEP-10-C (gate run)  
+**Status:** ready — fixes pushed, awaiting Luffy pytest run  
+**Last action:** [09:51] Perplexity pushed corrected context_budget.py + test_step10_graphify.py (commit a73143a)  
+**Blockers:** none — code is fixed, just needs local pytest confirmation  
+**Next:** Run `pytest tests/test_step10_graphify.py -v` — expect 4 passed — then follow STEP-10-C close procedure above
 
 > Scratchpad Protocol: update this section after every action. Never re-read
 > `logs/luffy-journal.jsonl` or `tickets/closed/*.yaml` when this section is current.
