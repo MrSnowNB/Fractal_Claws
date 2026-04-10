@@ -1,60 +1,75 @@
+---
 ticket_id: STEP-10-B
-title: "Wire graphify_repo() into runner.py SESSION_START"
-status: open
-priority: high
-depth: 1
+title: "Add graphify_repo() method to TicketIO"
+version: "0.10.0"
+last_updated: "2026-04-09"
+
+# Lifecycle
+depth: 0
 parent: STEP-10
-depends_on:
-  - STEP-10-A
-agent: luffy-v1
+children: []
+status: pending
+attempts: 0
+decrement: 3
+priority: medium
 
+# Task definition
 task: |
-  Read agent/runner.py. Write scratch first.
+  Add a graphify_repo() method to the TicketIO class in src/ticket_io.py.
 
-  Find the SESSION_START block (where budget.reset_session() is called).
-  Immediately after budget.reset_session(), add:
+  This method should:
+  - Accept a repo_path parameter (default "tickets/closed")
+  - Return a graph dict with nodes, edges, and metadata
+  - Use ContextBudget.file_hash() and ContextBudget.estimate_tokens() for hashing and token counting
+  - Extract ticket relationships (parent/child) from the ticket data
+  - Handle errors gracefully and log them
 
-    graphify_result = budget.graphify_repo(root=".")
+  The method should follow the same pattern as the existing graphify_repo() in ContextBudget (agent/context_budget.py, lines 215-281) but adapted to work with Ticket objects from TicketIO.load_ticket().
 
-  Then append a journal entry using append_journal() (from scripts/log_journal.py):
+  Key differences from ContextBudget.graphify_repo():
+  - Use TicketIO.load_ticket() to load tickets instead of raw YAML reading
+  - Extract parent/child relationships from Ticket.children and Ticket.parent fields
+  - Include Ticket-specific metadata like status, priority, created_at
 
-    append_journal({
-        "event": "GRAPHIFY_COMPLETE",
-        "files": graphify_result["files_scanned"],
-        "tokens_estimated": graphify_result["tokens_estimated"],
-        "zone_summary": graphify_result["zone_summary"],
-    })
+  Return format:
+  {
+    "nodes": [
+      {
+        "id": ticket_id,
+        "label": ticket_id,
+        "type": "ticket",
+        "file": path,
+        "content_hash": sha256,
+        "tokens": int,
+        "status": str,
+        "priority": str,
+        "created_at": str
+      },
+      ...
+    ],
+    "edges": [
+      {
+        "from": parent_id,
+        "to": child_id,
+        "type": "parent_of" | "depends_on"
+      },
+      ...
+    ],
+    "metadata": {
+      "source_dir": repo_path,
+      "generated_at": ISO timestamp,
+      "ticket_count": int,
+      "errors": [optional list of error messages]
+    }
+  }
 
-  RULES:
-  - Do not move or restructure the SESSION_START block.
-  - Do not touch any other method or section of runner.py.
-  - graphify_repo() call must come AFTER reset_session() and BEFORE any ticket is loaded.
-  - Journal entry must use the exact keys: event, files, tokens_estimated, zone_summary.
+  Write the result to logs/STEP-10-B-graph.yaml using TicketIO.save_ticket() pattern
+  (save as YAML, not as a dict).
 
-rationale: |
-  graphify_repo() must run at session start so should_read() returns (False, "cached")
-  for all unchanged files from the very first ticket. Without this wiring the pre-scan
-  never executes and Luffy continues re-reading specs each session.
-
-produces:
-  - agent/runner.py
-
-consumes:
-  - agent/runner.py
+  After implementation, run pytest tests/test_ticket_io.py to verify.
+result_path: logs/STEP-10-B-graph.yaml
+context_files:
+  - src/ticket_io.py
+  - src/operator_v7.py
   - agent/context_budget.py
-  - scripts/log_journal.py
-
-allowed_tools:
-  - read_file
-  - write_file
-
-acceptance_criteria: |
-  - budget.graphify_repo(root=".") called after reset_session() in SESSION_START
-  - append_journal() called with event=GRAPHIFY_COMPLETE and correct keys
-  - No other changes to runner.py
-
-task_steps:
-  - Write scratch: locate SESSION_START block, plan insertion point
-  - Read agent/runner.py fully
-  - Insert graphify_repo() call and journal entry
-  - Write file
+---

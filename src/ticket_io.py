@@ -45,6 +45,9 @@ LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 # Import canonical dataclass from operator_v7
 from src.operator_v7 import Ticket, TicketResult, TicketStatus, TicketPriority
 
+# Import ContextBudget for hashing and token estimation
+from agent.context_budget import ContextBudget
+
 logger = logging.getLogger(__name__)
 
 
@@ -358,7 +361,7 @@ def lint_ticket(ticket: Ticket, path: str, hard_fail: bool = False) -> list[str]
     violations = []
     ticket_id = ticket.id
     
-    # Rule: exec_python paths must start with 'output/'
+    # Rule: exec_python paths must start with 'output/' (sandbox rule)
     # allowed_tools is in _extras, not a dataclass field
     allowed_tools = getattr(ticket, "_extras", {}).get("allowed_tools", []) or []
     if "exec_python" in allowed_tools:
@@ -393,3 +396,102 @@ def lint_ticket(ticket: Ticket, path: str, hard_fail: bool = False) -> list[str]
             violations.append(msg)
     
     return violations
+
+
+# ── graphify_repo() ───────────────────────────────────────────────────────────
+
+def graphify_repo(repo_path: str = "tickets/closed") -> dict:
+    """Build a knowledge graph from tickets in a directory.
+
+    Args:
+        repo_path: Directory containing ticket YAML files (default: "tickets/closed")
+
+    Returns:
+        Graph dict with nodes, edges, and metadata
+
+    This function uses TicketIO.load_ticket() to load tickets and extracts
+    parent/child relationships from Ticket.children and Ticket.parent fields.
+    It uses ContextBudget.file_hash() and ContextBudget.estimate_tokens() for
+    hashing and token counting.
+    """
+    graph = {
+        "nodes": [],
+        "edges": [],
+        "metadata": {
+            "source_dir": repo_path,
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "ticket_count": 0,
+        },
+    }
+
+    tickets_dir = Path(repo_path)
+    if not tickets_dir.exists():
+        graph["metadata"]["error"] = f"Directory not found: {repo_path}"
+        return graph
+
+    ticket_files = sorted(tickets_dir.glob("*.yaml"))
+    graph["metadata"]["ticket_count"] = len(ticket_files)
+
+    # Initialize ContextBudget for hashing and token estimation
+    budget = ContextBudget()
+
+    for ticket_file in ticket_files:
+        try:
+            ticket = load_ticket(str(ticket_file))
+
+            # Build node with Ticket-specific metadata
+            node = {
+                "id": ticket.id,
+                "label": ticket.id,
+                "type": "ticket",
+                "file": str(ticket_file),
+                "content_hash": budget.file_hash(str(ticket_file)),
+                "tokens": budget.estimate_tokens(str(ticket.task or "")),
+                "status": ticket.status.value,
+                "priority": ticket.priority.value,
+                "created_at": ticket.created_at,
+            }
+            graph["nodes"].append(node)
+
+            # Extract parent/child relationships
+            # Parent relationship: ticket.parent points to its parent
+            if ticket.parent:
+                graph["edges"].append({
+                    "from": ticket.parent,
+                    "to": ticket.id,
+                    "type": "parent_of",
+                })
+
+            # Child relationships: ticket.children are children of this ticket
+            for child_id in (ticket.children or []):
+                graph["edges"].append({
+                    "from": ticket.id,
+                    "to": child_id,
+                    "type": "parent_of",
+                })
+
+            # depends_on relationships: ticket.depends_on are dependencies
+            for dep_id in (ticket.depends_on or []):
+                graph["edges"].append({
+                    "from": ticket.id,
+                    "to": dep_id,
+                    "type": "depends_on",
+                })
+
+        except TicketIOError as e:
+            graph["metadata"].setdefault("errors", []).append(
+                f"{ticket_file.stem}: {str(e)}"
+            )
+            logger.warning("[ticket_io.graphify_repo] skipping %s: %s", ticket_file, e)
+
+    # Deduplicate edges
+    seen = set()
+    unique_edges = []
+    for edge in graph["edges"]:
+        key = (edge["from"], edge["to"], edge["type"])
+        if key not in seen:
+            seen.add(key)
+            unique_edges.append(edge)
+    graph["edges"] = unique_edges
+
+    return graph
