@@ -213,25 +213,27 @@ class ContextBudget:
     # ── zone detection ──────────────────────────────────────────────────────
 
     def _detect_zone(self, path: str) -> str:
-        """Detect the budget zone for a file based on path patterns.
+        """Detect the budget zone for a file based on path components.
 
-        Rules (in priority order):
-          system_prompt  — path contains 'system' or 'persona'
-          ticket_context — path contains 'ticket' or 'tickets/'
-          scratch_pad    — path contains 'logs/' or 'scratch' or 'temp'
+        Rules match on individual path PARTS only — never substring of the
+        full path string — so pytest tmp_path directories (which may contain
+        words like 'ticket' or 'log' in temp dir names) do not pollute results.
+
+        Priority order:
+          system_prompt  — any part is 'system' or 'persona'
+          ticket_context — any part is 'tickets' (exact directory name)
+          scratch_pad    — any part is 'logs' or 'scratch' or 'temp'
           docs_cache     — everything else (AI-FIRST/, src/, agent/, etc.)
         """
-        # Normalise to forward-slash parts for cross-platform matching
-        parts = Path(path).parts
-        lowered = path.replace("\\", "/").lower()
+        parts_lower = [p.lower() for p in Path(path).parts]
 
-        if "system" in lowered or "persona" in lowered:
+        if any(p in ("system", "persona") for p in parts_lower):
             return "system_prompt"
-        # Match the directory name 'tickets' anywhere in the path
-        if any(p.lower() == "tickets" for p in parts) or "ticket" in lowered:
+        # Match the DIRECTORY named 'tickets' — not any path containing 'ticket'
+        if "tickets" in parts_lower:
             return "ticket_context"
-        # logs/ directory maps to scratch_pad (runtime output, not docs)
-        if any(p.lower() == "logs" for p in parts) or "scratch" in lowered or "temp" in lowered:
+        # logs/ scratch/ temp/ directories
+        if any(p in ("logs", "scratch", "temp") for p in parts_lower):
             return "scratch_pad"
         return "docs_cache"
 
