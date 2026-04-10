@@ -268,6 +268,41 @@ of the spec object. STEP-08 journal entry must use the full object. Do not backf
 
 ---
 
+### [ ] Step 11: Luffy Law Mechanical Enforcement
+**Spec:** `AI-FIRST/STEP-11-LUFFY-LAW-ENFORCEMENT.md` ✅ written  
+**Files:** `agent/sequence_gate.py`, `agent/runner.py`, `tests/test_luffy_law.py` (new)  
+**Gate:** `pytest tests/test_luffy_law.py -v` (6 tests) + `pytest tests/ -v` (0 failed)  
+**Prerequisite:** STEP-10-D (context_budget + sequence_gate) live ✅
+
+**What it does:**
+- **Law §1 hard block** — `execute_ticket()` cannot write `TICKET_CLOSED` unless a
+  non-INIT scratch event exists for the ticket in the current session. Raises
+  `LawViolationError` → treated as failure → goes to ISSUE.md.
+- **Law §2 soft warning** — `drain()` emits `SCRATCHPAD_READ` journal event after reading
+  the `## Scratchpad` section of this file at session start. `execute_ticket()` checks
+  for the event and logs `LAW_VIOLATION` (non-fatal) if absent.
+- **Law §3 info log** — `build_prompt()` emits `LAW_VIOLATION` (severity: info) on every
+  context cache hit, providing an audit trail of tokens saved per session.
+
+**Sub-tasks:**
+
+| Sub-task | Task | Owner |
+|---|---|---|
+| 11-A | Add `LawViolationError` + `assert_scratch_written()` to `agent/sequence_gate.py` | Luffy |
+| 11-B | Hook Law §1 in `execute_ticket()` before `TICKET_CLOSED` write | Luffy |
+| 11-C | Hook Law §2: `SCRATCHPAD_READ` emit in `drain()` + check in `execute_ticket()` | Luffy |
+| 11-D | Hook Law §3: `LAW_VIOLATION` info emit in `build_prompt()` on cache skip | Luffy |
+| 11-E | Write `tests/test_luffy_law.py` — 6+ tests covering §1 hard block, §2 warning, §3 info | Luffy |
+| 11-F | Gate, journal with anchor, commit `STEP-11: Luffy Law mechanical enforcement`, push | Luffy |
+
+**Invariants to preserve:**
+- Law §1 is a hard block — ticket cannot close without scratch activity
+- Law §2 is a soft warning — `--ticket` flag bypasses `drain()`, so §2 non-fatal
+- Law §3 is informational only — records cache hits, not actual violations
+- Full test suite stays green (existing skips allowed)
+
+---
+
 ## Architecture Context
 
 ```
@@ -286,6 +321,7 @@ Layer 2: FRACTAL CLAWS (Ticket Router / Gate)  ← this repo
   Skill store → reads skills/ before decomposition
   Lint gate → warns on malformed tickets before dispatch
   Log manager → FIFO prune on drain entry + every PASS close (STEP-08E)
+  Luffy Law gate → §1 hard block on TICKET_CLOSED (STEP-11)
 
 Layer 3: OPENCLAW (Child Executor)  — A3B model
   Spawned by delegate_task() — loads only context_files from ticket
@@ -321,11 +357,11 @@ Run manually: `pytest tests/integration/ -v -s --no-header`
 
 ## Scratchpad
 
-**Active ticket:** STEP-10-D  
-**Status:** ready — awaiting Luffy restart  
-**Last action:** [09:16] Human pushed Luffy Law §2 + Scratchpad Protocol to NEXT-STEPS.md → pushed  
-**Blockers:** none  
-**Next:** Run `pytest tests/ -v`, verify GRAPHIFY_COMPLETE in journal, verify `logs/ctx-cache.json` exists, close STEP-10-D ticket, then commit
+**Active ticket:** STEP-11  
+**Status:** spec written and pushed — ready for Build phase  
+**Last action:** [09:43] Pushed STEP-11-LUFFY-LAW-ENFORCEMENT.md + updated build queue in NEXT-STEPS.md  
+**Blockers:** none — STEP-10-D prerequisites (ContextBudget, SequenceGate) are live  
+**Next:** Begin STEP-11-A — add `LawViolationError` + `assert_scratch_written()` to `agent/sequence_gate.py`
 
 > Scratchpad Protocol: update this section after every action. Never re-read
 > `logs/luffy-journal.jsonl` or `tickets/closed/*.yaml` when this section is current.
