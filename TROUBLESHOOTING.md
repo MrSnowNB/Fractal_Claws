@@ -221,7 +221,7 @@ TS-XXX:
 **Context**: test_run_extraction_integration in tests/test_trajectory.py fails because trajectory_extractor cannot parse attempts log.  
 **Symptom**: `assert 0 == 1` — zero passes found in INT-001-attempts.jsonl  
 **Error Snippet**: 
-```
+````
 [DEBUG] extract_trajectory: no pass found in ...logs\INT-001-attempts.jsonl
 ```
 **Root Cause**: Test writes multi-line JSON string to JSONL file, creating invalid format. Each line in JSONL must be a complete, valid JSON object on a single line. The test code produces:
@@ -241,3 +241,30 @@ jsonl_path.write_text(
 **Permanent Fix**: Update test_run_extraction_integration in tests/test_trajectory.py to use single-line JSON string.  
 **Prevention**: Review all JSONL test files for multi-line string formatting issues; add JSONL validation in test fixtures.  
 **Recurrence**: false — root cause identified and documented
+
+---
+
+### TS-20260410-001: STEP-11-B Validation Gate Test Fixture Issues
+
+**Status**: BLOCKED ❌ 2026-04-10  
+**Context**: STEP-11-B task (hook Law §1 in execute_ticket()) ran pytest - 8 failures in test_luffy_law.py.  
+**Symptom**: Tests fail due to test fixture misconfiguration, not code change:  
+- `validate_scratch` tests: check `logs/scratch-*.jsonl` but test passes temp_log_dir  
+- `assert_scratch_written` tests: look in `logs/` but test creates files in temp_log_dir  
+- `test_drain_emits_scratchpad_read_on_first_read`: CTX_BUDGET not imported  
+- `test_ticket_closes_only_with_scratch_events`: same scratch path issue  
+
+**Error Snippet**:  
+````
+FAILED tests/test_luffy_law.py::TestLaw1ScratchWritten::test_validate_scratch_passes_with_reasoning_verify
+FAILED tests/test_luffy_law.py::TestSequenceGateAssertScratchWritten::test_assert_scratch_written_passes  
+FAILED tests/test_luffy_law.py::TestLaw2ScratchpadRead::test_drain_emits_scratchpad_read_on_first_read - NameError: name 'CTX_BUDGET' is not defined
+```
+
+**Probable Cause**: Test fixtures use `temp_log_dir` fixture but implementation checks `logs/` directory directly. The tests were written expecting a different fixture setup.  
+**Quick Fix**: Fix test fixtures to write/read scratch files in `logs/` directory, or update implementation to accept log_dir parameter.  
+**Permanent Fix**: Audit test fixtures in conftest.py; ensure temp_log_dir fixture writes to correct path or update implementation to accept log_dir parameter.  
+**Prevention**: Add integration test that validates scratch file path consistency between test fixtures and implementation.  
+**Recurrence**: false — first occurrence of this specific fixture mismatch
+
+

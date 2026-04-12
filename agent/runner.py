@@ -798,6 +798,16 @@ def execute_ticket(ticket_path: str) -> bool:
                         "tool_sequence": tool_sequence,
                         "elapsed_s": 0.0,
                     })
+                    # Law §1 enforcement: scratch must have non-INIT events before closing
+                    try:
+                        SEQ_GATE.assert_scratch_written(ticket_id)
+                    except LawViolationError as e:
+                        append_journal({
+                            "event": "LAW_VIOLATION", "law": 1, "ticket": ticket_id,
+                            "detail": str(e),
+                        })
+                        return _handle_failure(ticket, ip_path, f"Law §1 VIOLATION: {str(e)}")
+
                     # Journal + scratch close
                     append_journal({"event": "TICKET_CLOSED", "ticket": ticket_id,
                                     "attempt": attempt_n, "wall_sec": 0.0,
